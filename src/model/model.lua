@@ -176,7 +176,8 @@ function model:_build()
     end
     localize(self.criterion)
 
-    self.context_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, 2*self.encoder_num_hidden))
+    self.context_fine_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, 2*self.encoder_num_hidden))
+    self.context_coarse_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, 2*self.encoder_num_hidden))
     self.encoder_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, self.encoder_num_hidden))
     self.encoder_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, self.encoder_num_hidden))
     self.cnn_grad_proto = localize(torch.zeros(self.max_encoder_l_h, self.batch_size, self.max_encoder_l_w, self.cnn_feature_size))
@@ -325,7 +326,7 @@ function model:step(batch, forward_only, beam_size, trie)
     local feval = function(p) --cut off when evaluate
         target = target_batch:transpose(1,2)
         target_eval = target_eval_batch:transpose(1,2)
-        local cnn_output_list = self.cnn_model:forward(input_batch) -- list of (batch_size, W, 512)
+        local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 512)
         local counter = 1
         local imgH = #cnn_output_list
         local source_l = cnn_output_list[1]:size()[2]
