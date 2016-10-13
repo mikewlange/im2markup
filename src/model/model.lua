@@ -110,6 +110,10 @@ function model:create(config)
     self.max_decoder_l = config.max_decoder_l
     self.input_feed = config.input_feed
     self.batch_size = config.batch_size
+    self.entropy_scale = config.entropy_scale
+    self.semi_sampling_p = config.semi_sampling_p
+    self.baseline_lr = config.baseline_lr
+    self.discount = config.discount
     self.prealloc = config.prealloc
     preallocateMemory(config.prealloc)
 
@@ -117,10 +121,12 @@ function model:create(config)
     self.pos_embedding_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 512)
     self.cnn_model = createCNNModel()
+    self.max_encoder_l = self.max_encoder_l_h*self.max_encoder_l_w
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
     self.encoder_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-fw')
     self.encoder_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-bw')
-    self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, self.max_encoder_l, 'decoder')
+    self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, self.max_encoder_l, 'decoder',
+        self.entropy_scale, self.semi_sampling_p, self.baseline_lr, self.discount)
     self.output_projector = createOutputUnit(self.decoder_num_hidden, self.target_vocab_size)
     self.global_step = 0
     self._init = true
@@ -145,6 +151,10 @@ function model:_build()
     log(string.format('max_decoder_l: %d', self.max_decoder_l))
     log(string.format('input_feed: %s', self.input_feed))
     log(string.format('batch_size: %d', self.batch_size))
+    log(string.format('entropy_scale: %f', self.entropy_scale))
+    log(string.format('semi_sampling_p: %f', self.semi_sampling_p))
+    log(string.format('baseline_lr: %f', self.baseline_lr))
+    log(string.format('discount: %f', self.discount))
     log(string.format('prealloc: %s', self.prealloc))
 
 
@@ -161,6 +171,10 @@ function model:_build()
     self.config.max_decoder_l = self.max_decoder_l
     self.config.input_feed = self.input_feed
     self.config.batch_size = self.batch_size
+    self.config.entropy_scale = self.entropy_scale
+    self.config.semi_sampling_p = self.semi_sampling_p
+    self.config.baseline_lr = self.baseline_lr
+    self.config.discount = self.discount
     self.config.prealloc = self.prealloc
 
 

@@ -54,6 +54,13 @@ cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]]
 cmd:option('-decoder_num_layers', 1, [[Number of hidden units in decoder cell]])
 cmd:option('-vocab_file', '', [[Vocabulary file. A token per line.]])
 
+-- Reinforce
+cmd:option('-entropy_scale', 0.002, [[Scale entropy term]])
+cmd:option('-semi_sampling_p', 0, [[Probability of passing params through over sampling,
+                                    set 0 to always sample]])
+cmd:option('-baseline_lr', 0.1, [[Learning rate for averaged baseline, b_{k+1} = (1-lr)*b_k + lr*r]])
+cmd:option('-discount', 0.5, [[Discount factor for rewards, between 0 and 1]])
+
 -- Other
 cmd:option('-phase', 'test', [[train or test]])
 cmd:option('-gpu_id', 1, [[Which gpu to use. <=0 means use CPU]])
