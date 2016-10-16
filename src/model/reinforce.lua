@@ -97,7 +97,6 @@ function ReinforceCategorical:updateOutput(input)
      -- do argmax at test time
      self:_doArgmax(input)
    end
-   print (self.output:size())
    return self.output
 end
 

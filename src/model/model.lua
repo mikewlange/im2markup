@@ -1219,9 +1219,7 @@ end
 -- Save model to model_path
 function model:save(model_path)
     for i = 1, #self.layers do
-        if i ~= 77 then
-            self.layers[i]:clearState()
-        end
+        self.layers[i]:clearState()
     end
     torch.save(model_path, {{self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}, self.config, self.global_step, self.optim_state, id2vocab, self.reward_baselines})
 end

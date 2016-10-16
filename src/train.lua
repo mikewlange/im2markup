@@ -117,12 +117,6 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
-                    local model_path = paths.concat(model_dir, 'final-model')
-                    if model.global_step % 1000 ~= 0 then
-                        model_path = final_model_path
-                    end
-                    model:save(model_path)
-                    os.exit(1)
             logging:info(string.format('%f', math.exp(step_loss/stats[1])))
             num_seen = num_seen + 1
             num_samples = num_samples + real_batch_size
