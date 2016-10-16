@@ -20,7 +20,7 @@ end
 function nn.Module:setReuse()
   if self.reuse then
     assert(type(self.output) == type(self.gradInput), "invalid use of reuseMem:")
-    self.gradInput = self.output
+    --self.gradInput = self.output
   end
   return self
 end

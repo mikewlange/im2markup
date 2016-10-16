@@ -56,7 +56,7 @@ cmd:option('-vocab_file', '', [[Vocabulary file. A token per line.]])
 
 -- Reinforce
 cmd:option('-entropy_scale', 0.002, [[Scale entropy term]])
-cmd:option('-semi_sampling_p', 0, [[Probability of passing params through over sampling,
+cmd:option('-semi_sampling_p', 1.0, [[Probability of passing params through over sampling,
                                     set 0 to always sample]])
 cmd:option('-baseline_lr', 0.1, [[Learning rate for averaged baseline, b_{k+1} = (1-lr)*b_k + lr*r]])
 cmd:option('-discount', 0.5, [[Discount factor for rewards, between 0 and 1]])
@@ -117,6 +117,12 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
+                    local model_path = paths.concat(model_dir, 'final-model')
+                    if model.global_step % 1000 ~= 0 then
+                        model_path = final_model_path
+                    end
+                    model:save(model_path)
+                    os.exit(1)
             logging:info(string.format('%f', math.exp(step_loss/stats[1])))
             num_seen = num_seen + 1
             num_samples = num_samples + real_batch_size
@@ -227,8 +233,10 @@ function main()
     local output_dir = opt.output_dir
 
     opt.max_decoder_l = opt.max_num_tokens+1
-    opt.max_encoder_l_w = math.floor(opt.max_image_width / 8.0)
-    opt.max_encoder_l_h = math.floor(opt.max_image_height / 8.0)
+    opt.max_encoder_fine_l_w = math.floor(opt.max_image_width / 8.0)
+    opt.max_encoder_fine_l_h = math.floor(opt.max_image_height / 8.0)
+    opt.max_encoder_coarse_l_w = math.floor(opt.max_image_width / 64.0)
+    opt.max_encoder_coarse_l_h = math.floor(opt.max_image_height / 32.0)
     if gpu_id > 0 then
         logging:info(string.format('Using CUDA on GPU %d', gpu_id))
         require 'cutorch'

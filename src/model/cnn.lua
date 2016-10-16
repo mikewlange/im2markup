@@ -2,6 +2,7 @@ require 'cutorch'
 require 'nn'
 require 'nngraph'
 require 'cudnn'
+require 'cunn'
 
 function createCNNModel(use_cuda)
     local model = nn.Sequential()

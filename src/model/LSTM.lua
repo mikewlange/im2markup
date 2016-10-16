@@ -1,5 +1,6 @@
  --[[ Create LSTM unit, adapted from https://github.com/karpathy/char-rnn/blob/master/model/LSTM.lua
  -- and https://github.com/harvardnlp/seq2seq-attn/blob/master/models.lua
+ -- and https://github.com/jeffreyling/seq2seq-hard/blob/summary/models.lua
  --    ARGS:
  --        - `input_size`      : integer, number of input dimensions. If use_lookup is true, this is the embedding size
  --        - `num_hidden`  : integer, number of hidden nodes
@@ -14,7 +15,8 @@
  --        inputs: x, (context), (prev attention), [prev_c, prev_h]*L
  --        outputs: [next_c, next_h]*L, h_out
  --]]
- 
+require 'reinforce'
+
 function createLSTM(input_size, num_hidden, num_layers,
     dropout,
     use_attention, input_feed,
@@ -22,7 +24,7 @@ function createLSTM(input_size, num_hidden, num_layers,
     batch_size,
     max_encoder_l,
     model,
-    entropy_scale, semi_sampling_p, baseline_lr, discount
+    entropy_scale, semi_sampling_p
     )
 
   dropout = dropout or 0 
@@ -34,7 +36,7 @@ function createLSTM(input_size, num_hidden, num_layers,
   if use_attention then --decoder
       table.insert(inputs, nn.Identity()()) -- all context (batch_size x imgH_coarse*imgW_coarse x num_hidden)
       offset = offset + 1
-      table.insert(inputs, nn.Identity()()) -- all context (batch_size x imgH_coarse*imgW_coarse x num_fine x num_hidden)
+      table.insert(inputs, nn.Identity()()) -- all context (batch_size x imgH_coarse*imgW_coarse x fine x num_hidden)
       offset = offset + 1
       if input_feed then
           table.insert(inputs, nn.Identity()()) -- prev context_attn (batch_size x num_hidden)
@@ -115,7 +117,7 @@ function createLSTM(input_size, num_hidden, num_layers,
     local top_h = outputs[#outputs]
     local decoder_out
     local decoder_attn = create_decoder_attn(num_hidden, 0, batch_size, max_encoder_l,
-        entropy_scale, semi_sampling_p, baseline_lr, discount)
+        entropy_scale, semi_sampling_p)
     decoder_attn.name = 'decoder_attn'
     decoder_out = decoder_attn({top_h, inputs[2], inputs[3]})
     if dropout then
@@ -127,12 +129,13 @@ function createLSTM(input_size, num_hidden, num_layers,
 end
 
 function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
-    entropy_scale, semi_sampling_p, baseline_lr, discount)
-  -- inputs[1]: 2D tensor target_t (batch_l x num_hidden) and
+    entropy_scale, semi_sampling_p)
+  -- inputs[1]: 2D tensor target_t (batch_size x num_hidden) and
   -- inputs[2]: 3D tensor for coarse context (batch_size x imgH_coarse*imgW_coarse x num_hidden)
   -- inputs[3]: 4D tensor for fine context (batch_size x imgH_coarse*imgW_coarse x fine x num_hidden)
   
   local inputs = {}
+  local fine, max_encoder_coarse_l = unpack(max_encoder_l)
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
@@ -142,53 +145,56 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
   simple = simple or 0
   -- get attention
   local attn_coarse = nn.MM():usePrealloc("dec_attn_mm1",
-                                     {{batch_size, max_encoder_l, num_hidden},{batch_size, num_hidden, 1}},
-                                     {{batch_size, max_encoder_l, 1}})({context_coarse, nn.Replicate(1,3)(target_t)}) -- batch_l x source_l x 1
-  attn_coarse = nn.Sum(3)(attn_coarse)
+                                     {{batch_size, max_encoder_coarse_l, num_hidden},{batch_size, num_hidden, 1}},
+                                     {{batch_size, max_encoder_coarse_l, 1}})({context_coarse, nn.Replicate(1,3)(target_t)}) -- batch_size x imgH_coarse*imgW_coarse x 1
+  attn_coarse = nn.Sum(3)(attn_coarse) -- batch_size x imgH_coarse*imgW_coarse
   local softmax_attn_coarse = nn.SoftMax()
   softmax_attn_coarse.name = 'softmax_attn_coarse'
-  attn_coarse = softmax_attn_coarse(attn_coarse)
+  attn_coarse = softmax_attn_coarse(attn_coarse) -- batch_size x imgH_coarse*imgW_coarse
 
   -- sample from attn_coarse
-  local sampler_coarse = nn.ReinforcementCategorical(entropy_scale, semi_sampling_p, baseline_lr, discount)
+  local sampler_coarse = nn.ReinforceCategorical(entropy_scale, semi_sampling_p)
   sampler_coarse.name = 'sampler_coarse'
-  attn_coarse = sampler_coarse(attn_coarse) --batch_l x source_l
+  attn_coarse = sampler_coarse(attn_coarse) --batch_size x imgH_coarse*imgW_coarse
 
-  --attn_coarse = nn.Replicate(1,2)(attn_coarse) -- batch_l x  1 x source_l
+  --attn_coarse = nn.Replicate(1,2)(attn_coarse) -- batch_size x 1 x imgH_coarse*imgW_coarse
  
   -- attn fine
-  local reshape_context_fine = nn.Reshape(-1, num_hidden, true)(context_fine) -- batch_l x (source_l*fine) x num_hidden
+  local reshape_context_fine = nn.Reshape(-1, num_hidden, true)(context_fine) -- batch_size x (imgH_coarse*imgW_coarse*fine) x num_hidden
   local attn_fine = nn.MM():usePrealloc("dec_attn_mm2",
-                                     {{batch_size, max_encoder_l_fine, num_hidden},{batch_size, num_hidden, 1}},
-                                     {{batch_size, max_encoder_l_fine, 1}})({reshape_context_fine, nn.Replicate(1,3)(target_t)}) -- batch_l x source_l*fine x 1
-  attn_fine = nn.Sum(3)(attn_fine) -- batch_l x source_l*fine
-  attn_fine = nn.View(-1):setNumInputDims(1)(nn.ViewAs(3)({attn_fine, context_fine})) -- (batch_l*source_l) x fine
+                                     {{batch_size, max_encoder_coarse_l*fine, num_hidden},{batch_size, num_hidden, 1}},
+                                     {{batch_size, max_encoder_coarse_l*fine, 1}})({reshape_context_fine, nn.Replicate(1,3)(target_t)}) -- batch_size x (imgH_coarse*imgW_coarse*fine) x 1
+  attn_fine = nn.Sum(3)(attn_fine) -- batch_size x imgH_coarse*imgW_coarse*fine
+  attn_fine = nn.View(-1):setNumInputDims(1)(nn.ViewAs(3)({attn_fine, context_fine})) -- (batch_size*imgH_coarse*imgW_coarse) x fine
   local softmax_attn_fine = nn.SoftMax()
   softmax_attn_fine.name = 'softmax_attn_fine'
-  attn_fine = softmax_attn(attn_fine)
+  attn_fine = softmax_attn_fine(attn_fine) -- batch_size x imgH_coarse*imgW_coarse
 
-  -- sample from attn_coarse
-  local sampler_fine = nn.ReinforcementCategorical(entropy_scale, semi_sampling_p, baseline_lr, discount)
+  -- sample from attn_fine
+  local sampler_fine = nn.ReinforceCategorical(entropy_scale, semi_sampling_p)
   sampler_fine.name = 'sampler_fine'
-  attn_fine = sampler(attn_fine) --batch_l x source_l
-  attn_fine = nn.ViewAs(3)({attn_fine, context_fine}) -- batch_l x source_l x source_char_l
+  attn_fine = sampler_fine(attn_fine) --batch_size x imgH_coarse*imgW_coarse
+  attn_fine = nn.ViewAs(3)({attn_fine, context_fine}) -- batch_size x imgH_coarse*imgW_coarse x fine
 
    -- multiply attentions together
    local mul_attn = nn.CMulTable():usePrealloc("dec_hier_attn_cmultable",
-                                        {{batch_size, max_encoder_l, num_fine}, {batch_size, max_encoder_l, num_fine}})
-                                   ({nn.ReplicateAs(3,3)({attn_coarse, attn_fine}), attn_fine}) -- batch_size x max_l x fine
-   mul_attn = nn.Replicate(1,2)(nn.View(-1):setNumInputDims(2)(mul_attn)) -- batch_l x 1 x (source_l*fine)
+                                        {{batch_size, max_encoder_coarse_l, fine}, {batch_size, max_encoder_coarse_l, fine}})
+                                   ({nn.ReplicateAs(3,3)({attn_coarse, attn_fine}), attn_fine}) -- batch_size x (imgH_coarse*imgW_coarse) x fine
+   mul_attn = nn.View(-1):setNumInputDims(2)(mul_attn) -- batch_size x 1 x (imgH_coarse*imgW_coarse*fine)
+   local mul_attn_layer = nn.Replicate(1,2)
+   mul_attn_layer.name = 'mul_attn'
+   mul_attn = mul_attn_layer(mul_attn) -- batch_size x 1 x (imgH_coarse*imgW_coarse*fine)
   -- apply attention to context
-  local context_combined = nn.MM():usePrealloc("dec_attn_mm2",
-                                                 {{batch_size, 1, max_encoder_l},{batch_size, max_encoder_l, num_hidden}},
-                                                 {{batch_size, 1, num_hidden}})({mul_attn, reshape_context_fine}) -- batch_l x source_l x num_hidden
+  local context_combined = nn.MM():usePrealloc("dec_attn_mm3",
+                                                 {{batch_size, 1, max_encoder_coarse_l*fine},{batch_size, max_encoder_coarse_l*fine, num_hidden}},
+                                                 {{batch_size, 1, num_hidden}})({mul_attn, reshape_context_fine}) -- batch_size x 1 x num_hidden
   context_combined = nn.Sum(2):usePrealloc("dec_attn_sum",
                                              {{batch_size, 1, num_hidden}},
-                                             {{batch_size, num_hidden}})(context_combined) -- batch_l x num_hidden
+                                             {{batch_size, num_hidden}})(context_combined) -- batch_size x num_hidden
   local context_output
   if simple == 0 then
     context_combined = nn.JoinTable(2):usePrealloc("dec_attn_jointable",
-                            {{batch_size,num_hidden},{batch_size, num_hidden}})({context_combined, inputs[1]}) -- batch_l x num_hidden*2
+                            {{batch_size,num_hidden},{batch_size, num_hidden}})({context_combined, inputs[1]}) -- batch_size x num_hidden*2
     context_output = nn.Tanh():usePrealloc("dec_noattn_tanh",{{batch_size,num_hidden}})(nn.LinearNoBias(num_hidden*2, num_hidden):usePrealloc("dec_noattn_linear",
     {{batch_size,2*num_hidden}})(context_combined))
   else

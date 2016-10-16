@@ -9,6 +9,7 @@ require 'paths'
 package.path = package.path .. ';src/?.lua' .. ';src/utils/?.lua' .. ';src/model/?.lua' .. ';src/optim/?.lua'
 require 'cnn'
 require 'LSTM'
+require 'reshaper'
 require 'output_projector'
 require 'criterion'
 require 'model_utils'
@@ -48,21 +49,29 @@ function model:load(model_path, config)
 
     -- Build model
 
+    --torch.save(model_path, {{self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}, self.config, self.global_step, self.optim_state, id2vocab})
     assert(paths.filep(model_path), string.format('Model %s does not exist!', model_path))
 
     local checkpoint = torch.load(model_path)
     local model, model_config = checkpoint[1], checkpoint[2]
-    preallocateMemory(model_config.prealloc)
+    preallocateMemory(config.prealloc)
     self.cnn_model = model[1]:double()
-    self.encoder_fw = model[2]:double()
-    self.encoder_bw = model[3]:double()
-    self.decoder = model[4]:double()      
-    self.output_projector = model[5]:double()
-    self.pos_embedding_fw = model[6]:double()
-    self.pos_embedding_bw = model[7]:double()
+    self.encoder_fine_fw = model[2]:double()
+    self.encoder_fine_bw = model[3]:double()
+    self.encoder_coarse_fw = model[4]:double()
+    self.encoder_coarse_bw = model[5]:double()
+    self.reshaper = model[6]:double()
+    self.decoder = model[7]:double()      
+    self.output_projector = model[8]:double()
+    self.pos_embedding_fine_fw = model[9]:double()
+    self.pos_embedding_fine_bw = model[10]:double()
+    self.pos_embedding_coarse_fw = model[11]:double()
+    self.pos_embedding_coarse_bw = model[12]:double()
     self.global_step = checkpoint[3]
     self.optim_state = checkpoint[4]
     id2vocab = checkpoint[5]
+    local reward_baselines = checkpoint[6]
+    self.reward_baselines = reward_baselines or {}
 
     -- Load model structure parameters
     self.cnn_feature_size = 512
@@ -74,24 +83,45 @@ function model:load(model_path, config)
     self.target_vocab_size = #id2vocab+4
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
-    self.prealloc = model_config.prealloc
+    self.prealloc = config.prealloc
+    self.fine = model_config.fine or {4,8}
 
-    self.max_encoder_l_w = config.max_encoder_l_w or model_config.max_encoder_l_w
-    self.max_encoder_l_h = config.max_encoder_l_h or model_config.max_encoder_l_h
+    self.entropy_scale = config.entropy_scale or model_config.entropy_scale
+    self.semi_sampling_p = config.semi_sampling_p or model_config.semi_sampling_p
+    self.baseline_lr = config.baseline_lr or model_config.baseline_lr
+    self.discount = config.discount or model_config.discount
+
+    self.max_encoder_fine_l_w = config.max_encoder_fine_l_w or model_config.max_encoder_fine_l_w
+    self.max_encoder_fine_l_h = config.max_encoder_fine_l_h or model_config.max_encoder_fine_l_h
+    self.max_encoder_coarse_l_w = config.max_encoder_coarse_l_w or model_config.max_encoder_coarse_l_w
+    self.max_encoder_coarse_l_h = config.max_encoder_coarse_l_h or model_config.max_encoder_coarse_l_h
     self.max_decoder_l = config.max_decoder_l or model_config.max_decoder_l
     self.batch_size = config.batch_size or model_config.batch_size
 
-    if config.max_encoder_l_h > model_config.max_encoder_l_h then
-        local pos_embedding_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
-        local pos_embedding_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
-        for i = 1, self.max_encoder_l_h do
-            local j = math.min(i, model_config.max_encoder_l_h)
-            pos_embedding_fw:get(1).weight[i] = self.pos_embedding_fw:get(1).weight[j]
-            pos_embedding_bw:get(1).weight[i] = self.pos_embedding_bw:get(1).weight[j]
+    if config.max_encoder_fine_l_h > model_config.max_encoder_fine_l_h then
+        local pos_embedding_fine_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
+        local pos_embedding_fine_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
+        for i = 1, self.max_encoder_fine_l_h do
+            local j = math.min(i, model_config.max_encoder_fine_l_h)
+            pos_embedding_fine_fw:get(1).weight[i] = self.pos_embedding_fine_fw:get(1).weight[j]
+            pos_embedding_fine_bw:get(1).weight[i] = self.pos_embedding_fine_bw:get(1).weight[j]
         end
-        self.pos_embedding_fw = pos_embedding_fw
-        self.pos_embedding_bw = pos_embedding_bw
+        self.pos_embedding_fine_fw = pos_embedding_fine_fw
+        self.pos_embedding_fine_bw = pos_embedding_fine_bw
     end
+    if config.max_encoder_coarse_l_h > model_config.max_encoder_coarse_l_h then
+        local pos_embedding_coarse_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
+        local pos_embedding_coarse_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
+        for i = 1, self.max_encoder_coarse_l_h do
+            local j = math.min(i, model_config.max_encoder_coarse_l_h)
+            pos_embedding_coarse_fw:get(1).weight[i] = self.pos_embedding_coarse_fw:get(1).weight[j]
+            pos_embedding_coarse_bw:get(1).weight[i] = self.pos_embedding_coarse_bw:get(1).weight[j]
+        end
+        self.pos_embedding_coarse_fw = pos_embedding_coarse_fw
+        self.pos_embedding_coarse_bw = pos_embedding_coarse_bw
+    end
+    --self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, {self.fine[1]*self.fine[2], self.max_encoder_coarse_l_h*self.max_encoder_coarse_l_w}, 'decoder',
+        --os.exit(1)
     self:_build()
 end
 
@@ -105,8 +135,10 @@ function model:create(config)
     self.decoder_num_layers = config.decoder_num_layers
     self.target_vocab_size = config.target_vocab_size
     self.target_embedding_size = config.target_embedding_size
-    self.max_encoder_l_w = config.max_encoder_l_w
-    self.max_encoder_l_h = config.max_encoder_l_h
+    self.max_encoder_fine_l_w = config.max_encoder_fine_l_w
+    self.max_encoder_fine_l_h = config.max_encoder_fine_l_h
+    self.max_encoder_coarse_l_w = config.max_encoder_coarse_l_w
+    self.max_encoder_coarse_l_h = config.max_encoder_coarse_l_h
     self.max_decoder_l = config.max_decoder_l
     self.input_feed = config.input_feed
     self.batch_size = config.batch_size
@@ -115,24 +147,30 @@ function model:create(config)
     self.baseline_lr = config.baseline_lr
     self.discount = config.discount
     self.prealloc = config.prealloc
+    self.fine = {4,8}
     preallocateMemory(config.prealloc)
 
-    self.pos_embedding_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
-    self.pos_embedding_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
+    self.pos_embedding_fine_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
+    self.pos_embedding_fine_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
+    self.pos_embedding_coarse_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
+    self.pos_embedding_coarse_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 512)
     self.cnn_model = createCNNModel()
-    self.max_encoder_l = self.max_encoder_l_h*self.max_encoder_l_w
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
-    self.encoder_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-fw')
-    self.encoder_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, self.max_encoder_l, 'encoder-bw')
-    self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, self.max_encoder_l, 'decoder',
-        self.entropy_scale, self.semi_sampling_p, self.baseline_lr, self.discount)
+    self.encoder_fine_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
+    self.encoder_fine_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
+    self.encoder_coarse_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-coarse-fw')
+    self.encoder_coarse_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-coarse-bw')
+    self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, {self.fine[1]*self.fine[2], self.max_encoder_coarse_l_h*self.max_encoder_coarse_l_w}, 'decoder',
+        self.entropy_scale, self.semi_sampling_p)
     self.output_projector = createOutputUnit(self.decoder_num_hidden, self.target_vocab_size)
+    self.reshaper = nn.Reshaper(self.fine)
     self.global_step = 0
     self._init = true
 
     self.optim_state = {}
     self.optim_state.learningRate = config.learning_rate
+    self.reward_baselines = {}
     self:_build()
 end
 
@@ -146,8 +184,10 @@ function model:_build()
     log(string.format('decoder_num_layers: %d', self.decoder_num_layers))
     log(string.format('target_vocab_size: %d', self.target_vocab_size))
     log(string.format('target_embedding_size: %d', self.target_embedding_size))
-    log(string.format('max_encoder_l_w: %d', self.max_encoder_l_w))
-    log(string.format('max_encoder_l_h: %d', self.max_encoder_l_h))
+    log(string.format('max_encoder_fine_l_w: %d', self.max_encoder_fine_l_w))
+    log(string.format('max_encoder_fine_l_h: %d', self.max_encoder_fine_l_h))
+    log(string.format('max_encoder_coarse_l_w: %d', self.max_encoder_coarse_l_w))
+    log(string.format('max_encoder_coarse_l_h: %d', self.max_encoder_coarse_l_h))
     log(string.format('max_decoder_l: %d', self.max_decoder_l))
     log(string.format('input_feed: %s', self.input_feed))
     log(string.format('batch_size: %d', self.batch_size))
@@ -166,8 +206,10 @@ function model:_build()
     self.config.decoder_num_layers = self.decoder_num_layers
     self.config.target_vocab_size = self.target_vocab_size
     self.config.target_embedding_size = self.target_embedding_size
-    self.config.max_encoder_l_w = self.max_encoder_l_w
-    self.config.max_encoder_l_h = self.max_encoder_l_h
+    self.config.max_encoder_fine_l_w = self.max_encoder_fine_l_w
+    self.config.max_encoder_fine_l_h = self.max_encoder_fine_l_h
+    self.config.max_encoder_coarse_l_w = self.max_encoder_coarse_l_w
+    self.config.max_encoder_coarse_l_h = self.max_encoder_coarse_l_h
     self.config.max_decoder_l = self.max_decoder_l
     self.config.input_feed = self.input_feed
     self.config.batch_size = self.batch_size
@@ -175,6 +217,7 @@ function model:_build()
     self.config.semi_sampling_p = self.semi_sampling_p
     self.config.baseline_lr = self.baseline_lr
     self.config.discount = self.discount
+    self.config.fine = self.fine
     self.config.prealloc = self.prealloc
 
 
@@ -184,52 +227,82 @@ function model:_build()
     self.criterion = createCriterion(self.target_vocab_size)
 
     -- convert to cuda if use gpu
-    self.layers = {self.cnn_model, self.encoder_fw, self.encoder_bw, self.decoder, self.output_projector, self.pos_embedding_fw, self.pos_embedding_bw}
+    self.layers = {self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}
     for i = 1, #self.layers do
         localize(self.layers[i])
     end
     localize(self.criterion)
 
-    self.context_fine_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, 2*self.encoder_num_hidden))
-    self.context_coarse_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, 2*self.encoder_num_hidden))
-    self.encoder_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, self.encoder_num_hidden))
-    self.encoder_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_l_w*self.max_encoder_l_h, self.encoder_num_hidden))
-    self.cnn_grad_proto = localize(torch.zeros(self.max_encoder_l_h, self.batch_size, self.max_encoder_l_w, self.cnn_feature_size))
-    self.pos_embedding_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))
+    self.context_fine_proto = localize(torch.zeros(self.batch_size, self.max_encoder_fine_l_w*self.max_encoder_fine_l_h, 2*self.encoder_num_hidden))
+    self.context_coarse_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, 2*self.encoder_num_hidden))
+    self.encoder_fine_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_fine_l_w*self.max_encoder_fine_l_h, self.encoder_num_hidden))
+    self.encoder_fine_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_fine_l_w*self.max_encoder_fine_l_h, self.encoder_num_hidden))
+    self.encoder_coarse_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.encoder_num_hidden))
+    self.encoder_coarse_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.encoder_num_hidden))
+    self.reshaper_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.fine[1]*self.fine[2], 2*self.encoder_num_hidden))
+    self.cnn_fine_grad_proto = localize(torch.zeros(self.max_encoder_fine_l_h, self.batch_size, self.max_encoder_fine_l_w, self.cnn_feature_size))
+    self.cnn_coarse_grad_proto = localize(torch.zeros(self.max_encoder_coarse_l_h, self.batch_size, self.max_encoder_coarse_l_w, self.cnn_feature_size))
+    self.pos_embedding_fine_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))
+    self.pos_embedding_coarse_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))
 
     local num_params = 0
     self.params, self.grad_params = {}, {}
     for i = 1, #self.layers do
         local p, gp = self.layers[i]:getParameters()
-        if self._init then
-            p:uniform(-0.05,0.05)
+        if p:dim() ~= 0 then
+            if self._init then
+                p:uniform(-0.05,0.05)
+            end
+            num_params = num_params + p:size(1)
+            self.params[i] = p
+            self.grad_params[i] = gp
         end
-        num_params = num_params + p:size(1)
-        self.params[i] = p
-        self.grad_params[i] = gp
     end
     log(string.format('Number of parameters: %d', num_params))
 
     self.decoder_clones = clone_many_times(self.decoder, self.max_decoder_l)
-    self.encoder_fw_clones = clone_many_times(self.encoder_fw, self.max_encoder_l_w)
-    self.encoder_bw_clones = clone_many_times(self.encoder_bw, self.max_encoder_l_w)
+    self.encoder_fine_fw_clones = clone_many_times(self.encoder_fine_fw, self.max_encoder_fine_l_w)
+    self.encoder_fine_bw_clones = clone_many_times(self.encoder_fine_bw, self.max_encoder_fine_l_w)
+    self.encoder_coarse_fw_clones = clone_many_times(self.encoder_coarse_fw, self.max_encoder_coarse_l_w)
+    self.encoder_coarse_bw_clones = clone_many_times(self.encoder_coarse_bw, self.max_encoder_coarse_l_w)
     
-    for i = 1, #self.encoder_fw_clones do
-        if self.encoder_fw_clones[i].apply then
-            self.encoder_fw_clones[i]:apply(function(m) m:setReuse() end)
-            if self.prealloc then self.encoder_fw_clones[i]:apply(function(m) m:setPrealloc() end) end
+    for i = 1, #self.encoder_fine_fw_clones do
+        if self.encoder_fine_fw_clones[i].apply then
+            self.encoder_fine_fw_clones[i]:apply(function(m) m:setReuse() end)
+            if self.prealloc then self.encoder_fine_fw_clones[i]:apply(function(m) m:setPrealloc() end) end
         end
     end
-    for i = 1, #self.encoder_bw_clones do
-        if self.encoder_bw_clones[i].apply then
-            self.encoder_bw_clones[i]:apply(function(m) m:setReuse() end)
-            if self.prealloc then self.encoder_bw_clones[i]:apply(function(m) m:setPrealloc() end) end
+    for i = 1, #self.encoder_fine_bw_clones do
+        if self.encoder_fine_bw_clones[i].apply then
+            self.encoder_fine_bw_clones[i]:apply(function(m) m:setReuse() end)
+            if self.prealloc then self.encoder_fine_bw_clones[i]:apply(function(m) m:setPrealloc() end) end
         end
     end
+    for i = 1, #self.encoder_coarse_fw_clones do
+        if self.encoder_coarse_fw_clones[i].apply then
+            self.encoder_coarse_fw_clones[i]:apply(function(m) m:setReuse() end)
+            if self.prealloc then self.encoder_coarse_fw_clones[i]:apply(function(m) m:setPrealloc() end) end
+        end
+    end
+    for i = 1, #self.encoder_coarse_bw_clones do
+        if self.encoder_coarse_bw_clones[i].apply then
+            self.encoder_coarse_bw_clones[i]:apply(function(m) m:setReuse() end)
+            if self.prealloc then self.encoder_coarse_bw_clones[i]:apply(function(m) m:setPrealloc() end) end
+        end
+    end
+    self.sampler_coarse_clones = {}
+    self.sampler_fine_clones = {}
     for i = 1, #self.decoder_clones do
         if self.decoder_clones[i].apply then
             self.decoder_clones[i]:apply(function (m) m:setReuse() end)
             if self.prealloc then self.decoder_clones[i]:apply(function(m) m:setPrealloc() end) end
+            self.decoder_clones[i]:apply(function (m) 
+                if m.name == 'sampler_coarse' then
+                    self.sampler_coarse_clones[i] = m
+                elseif m.name == 'sampler_fine' then
+                    self.sampler_fine_clones[i] = m
+                end
+            end)
         end
     end
     -- initalial states
@@ -256,7 +329,7 @@ function model:_build()
         table.insert(self.init_bwd_dec, decoder_h_init:clone())
         table.insert(self.init_bwd_dec, decoder_h_init:clone()) 
     end
-    self.dec_offset = 3 -- offset depends on input feeding
+    self.dec_offset = 4 -- offset depends on input feeding
     if self.input_feed then
         self.dec_offset = self.dec_offset + 1
     end
@@ -341,60 +414,125 @@ function model:step(batch, forward_only, beam_size, trie)
         target = target_batch:transpose(1,2)
         target_eval = target_eval_batch:transpose(1,2)
         local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 512)
+        -- encode fine
         local counter = 1
-        local imgH = #cnn_output_list
-        local source_l = cnn_output_list[1]:size()[2]
-        local context = self.context_proto[{{1, batch_size}, {1, source_l*imgH}}]
-        assert(source_l <= self.max_encoder_l_w, string.format('max_encoder_l_w (%d) < source_l (%d)!', self.max_encoder_l_w, source_l))
-        for i = 1, imgH do
+        local imgH_fine = #cnn_output_fine_list
+        local imgW_fine = cnn_output_fine_list[1]:size()[2]
+        local context_fine = self.context_fine_proto[{{1, batch_size}, {1, imgW_fine*imgH_fine}}]
+        assert(imgW_fine <= self.max_encoder_fine_l_w, string.format('max_encoder_fine_l_w (%d) < imgW_fine (%d)!', self.max_encoder_fine_l_w, imgW_fine))
+        for i = 1, imgH_fine do
             if forward_only then
-                self.pos_embedding_fw:evaluate()
-                self.pos_embedding_bw:evaluate()
+                self.pos_embedding_fine_fw:evaluate()
+                self.pos_embedding_fine_bw:evaluate()
             else
-                self.pos_embedding_fw:training()
-                self.pos_embedding_bw:training()
+                self.pos_embedding_fine_fw:training()
+                self.pos_embedding_fine_bw:training()
             end
             local pos = localize(torch.zeros(batch_size)):fill(i)
-            local pos_embedding_fw  = self.pos_embedding_fw:forward(pos)
-            local pos_embedding_bw  = self.pos_embedding_bw:forward(pos)
-            local cnn_output = cnn_output_list[i] --1, imgW, 512
+            local pos_embedding_fine_fw  = self.pos_embedding_fine_fw:forward(pos)
+            local pos_embedding_fine_bw  = self.pos_embedding_fine_bw:forward(pos)
+            local cnn_output = cnn_output_fine_list[i] --1, imgW, 512
             source = cnn_output:transpose(1,2) -- imgW,1,512
             -- forward encoder
             local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
             for l = 1, self.encoder_num_layers do
-                rnn_state_enc[0][l*2-1]:copy(pos_embedding_fw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
-                rnn_state_enc[0][l*2]:copy(pos_embedding_fw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+                rnn_state_enc[0][l*2-1]:copy(pos_embedding_fine_fw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                rnn_state_enc[0][l*2]:copy(pos_embedding_fine_fw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
             end
-            for t = 1, source_l do
-                counter = (i-1)*source_l + t
+            for t = 1, imgW_fine do
+                counter = (i-1)*imgW_fine + t
                 if not forward_only then
-                    self.encoder_fw_clones[t]:training()
+                    self.encoder_fine_fw_clones[t]:training()
                 else
-                    self.encoder_fw_clones[t]:evaluate()
+                    self.encoder_fine_fw_clones[t]:evaluate()
                 end
                 local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
-                local out = self.encoder_fw_clones[t]:forward(encoder_input)
+                local out = self.encoder_fine_fw_clones[t]:forward(encoder_input)
                 rnn_state_enc[t] = out
-                context[{{},counter, {1, self.encoder_num_hidden}}]:copy(out[#out])
+                context_fine[{{},counter, {1, self.encoder_num_hidden}}]:copy(out[#out])
             end
-            local rnn_state_enc_bwd = reset_state(self.init_fwd_enc, batch_size, source_l+1)
+            local rnn_state_enc_bwd = reset_state(self.init_fwd_enc, batch_size, imgW_fine+1)
             for l = 1, self.encoder_num_layers do
-                rnn_state_enc_bwd[source_l+1][l*2-1]:copy(pos_embedding_bw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
-                rnn_state_enc_bwd[source_l+1][l*2]:copy(pos_embedding_bw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+                rnn_state_enc_bwd[imgW_fine+1][l*2-1]:copy(pos_embedding_fine_bw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                rnn_state_enc_bwd[imgW_fine+1][l*2]:copy(pos_embedding_fine_bw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
             end
-            for t = source_l, 1, -1 do
-                counter = (i-1)*source_l + t
+            for t = imgW_fine, 1, -1 do
+                counter = (i-1)*imgW_fine + t
                 if not forward_only then
-                    self.encoder_bw_clones[t]:training()
+                    self.encoder_fine_bw_clones[t]:training()
                 else
-                    self.encoder_bw_clones[t]:evaluate()
+                    self.encoder_fine_bw_clones[t]:evaluate()
                 end
                 local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
-                local out = self.encoder_bw_clones[t]:forward(encoder_input)
+                local out = self.encoder_fine_bw_clones[t]:forward(encoder_input)
                 rnn_state_enc_bwd[t] = out
-                context[{{},counter, {1+self.encoder_num_hidden, 2*self.encoder_num_hidden}}]:copy(out[#out])
+                context_fine[{{},counter, {1+self.encoder_num_hidden, 2*self.encoder_num_hidden}}]:copy(out[#out])
             end
         end
+        -- encode coarse
+        local counter = 1
+        local imgH_coarse = #cnn_output_coarse_list
+        local imgW_coarse = cnn_output_coarse_list[1]:size()[2]
+        local context_coarse = self.context_coarse_proto[{{1, batch_size}, {1, imgW_coarse*imgH_coarse}}]
+        assert(imgW_coarse <= self.max_encoder_coarse_l_w, string.format('max_encoder_coarse_l_w (%d) < imgW_coarse (%d)!', self.max_encoder_coarse_l_w, imgW_coarse))
+        for i = 1, imgH_coarse do
+            if forward_only then
+                self.pos_embedding_coarse_fw:evaluate()
+                self.pos_embedding_coarse_bw:evaluate()
+            else
+                self.pos_embedding_coarse_fw:training()
+                self.pos_embedding_coarse_bw:training()
+            end
+            local pos = localize(torch.zeros(batch_size)):fill(i)
+            local pos_embedding_coarse_fw  = self.pos_embedding_coarse_fw:forward(pos)
+            local pos_embedding_coarse_bw  = self.pos_embedding_coarse_bw:forward(pos)
+            local cnn_output = cnn_output_coarse_list[i] --1, imgW, 512
+            source = cnn_output:transpose(1,2) -- imgW,1,512
+            -- forward encoder
+            local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
+            for l = 1, self.encoder_num_layers do
+                rnn_state_enc[0][l*2-1]:copy(pos_embedding_coarse_fw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                rnn_state_enc[0][l*2]:copy(pos_embedding_coarse_fw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+            end
+            for t = 1, imgW_coarse do
+                counter = (i-1)*imgW_coarse + t
+                if not forward_only then
+                    self.encoder_coarse_fw_clones[t]:training()
+                else
+                    self.encoder_coarse_fw_clones[t]:evaluate()
+                end
+                local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
+                local out = self.encoder_coarse_fw_clones[t]:forward(encoder_input)
+                rnn_state_enc[t] = out
+                context_coarse[{{},counter, {1, self.encoder_num_hidden}}]:copy(out[#out])
+            end
+            local rnn_state_enc_bwd = reset_state(self.init_fwd_enc, batch_size, imgW_coarse+1)
+            for l = 1, self.encoder_num_layers do
+                rnn_state_enc_bwd[imgW_coarse+1][l*2-1]:copy(pos_embedding_coarse_bw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                rnn_state_enc_bwd[imgW_coarse+1][l*2]:copy(pos_embedding_coarse_bw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+            end
+            for t = imgW_coarse, 1, -1 do
+                counter = (i-1)*imgW_coarse + t
+                if not forward_only then
+                    self.encoder_coarse_bw_clones[t]:training()
+                else
+                    self.encoder_coarse_bw_clones[t]:evaluate()
+                end
+                local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
+                local out = self.encoder_coarse_bw_clones[t]:forward(encoder_input)
+                rnn_state_enc_bwd[t] = out
+                context_coarse[{{},counter, {1+self.encoder_num_hidden, 2*self.encoder_num_hidden}}]:copy(out[#out])
+            end
+        end -- context_coarse and conext_fine ready
+        -- input: imgH_coarse, imgW_coarse, imgH_fine, imgW_fine, fine
+        -- context_fine: batch_size, imgH_fine*imgW_fine, 2*encoder_num_hidden
+        -- desired output: context_coarse: batch_size, imgH_coarse*imgW_coarse, fine, 2*encoder_num_hidden
+        self.reshaper.imgW_coarse = imgW_coarse
+        self.reshaper.imgH_coarse = imgH_coarse
+        self.reshaper.imgW_fine = imgW_fine
+        self.reshaper.imgH_fine = imgH_fine
+        local reshape_context_fine = self.reshaper:forward(context_fine)
+        -- context_coarse and reshape_context_fine ready
         local preds = {}
         local indices
         local rnn_state_dec
@@ -434,8 +572,21 @@ function model:step(batch, forward_only, beam_size, trie)
                         temp_state = temp_state:contiguous()
                     end
                     return temp_state:view(batch_size*beam_size, source_l, num_hidden)
+                elseif hidden_state:dim() == 4 then
+                    local batch_size = hidden_state:size()[1]
+                    local source_l = hidden_state:size()[2]
+                    local source_l2 = hidden_state:size()[3]
+                    local num_hidden = hidden_state:size()[4]
+                    if not hidden_state:isContiguous() then
+                        hidden_state = hidden_state:contiguous()
+                    end
+                    local temp_state = hidden_state:view(batch_size, 1, source_l, source_l2, num_hidden):expand(batch_size, beam_size, source_l, source_l2, num_hidden)
+                    if not temp_state:isContiguous() then
+                        temp_state = temp_state:contiguous()
+                    end
+                    return temp_state:view(batch_size*beam_size, source_l, source_l2, num_hidden)
                 else
-                    assert(false, 'does not support ndim except for 2 and 3')
+                    assert(false, 'does not support ndim except for 2 and 3 and 4')
                 end
             end
             rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size, 0)
@@ -451,7 +602,8 @@ function model:step(batch, forward_only, beam_size, trie)
             --    rnn_state_dec[0][L*2-1+0]:zero()
             --    rnn_state_dec[0][L*2+0]:zero()
             --end
-            local beam_context = beam_replicate(context)
+            local beam_context_coarse = beam_replicate(context_coarse)
+            local beam_context_fine = beam_replicate(reshape_context_fine)
             local decoder_input
             local beam_input
             for t = 1, target_l do
@@ -467,9 +619,9 @@ function model:step(batch, forward_only, beam_size, trie)
                         end
                     end
                     beam_input = target[t]
-                    decoder_input = {beam_input, context, table.unpack(rnn_state_dec[t-1])}
+                    decoder_input = {beam_input, context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 else
-                    decoder_input = {beam_input, beam_context, table.unpack(rnn_state_dec[t-1])}
+                    decoder_input = {beam_input, beam_context_coarse, beam_context_fine, table.unpack(rnn_state_dec[t-1])}
                 end
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
@@ -634,7 +786,7 @@ function model:step(batch, forward_only, beam_size, trie)
             for t = 1, target_l do
                 self.decoder_clones[t]:training()
                 local decoder_input
-                decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 table.insert(preds, out[#out])
@@ -672,7 +824,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 for t = 1, target_l do
                     self.decoder_clones[t]:evaluate()
                     local decoder_input
-                    decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                    decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                     local out = self.decoder_clones[t]:forward(decoder_input)
                     local next_state = {}
                     local pred = self.output_projector:forward(out[#out]) --batch_size, vocab_size
@@ -691,7 +843,7 @@ function model:step(batch, forward_only, beam_size, trie)
                     rnn_state_dec[t] = next_state
                 end
                 -- use predictions to visualize attns
-                local attn_probs = localize(torch.zeros(batch_size, target_l, source_l*imgH))
+                local attn_probs = localize(torch.zeros(batch_size, target_l, imgW_fine*imgH_fine))
                 local attn_positions_h = localize(torch.zeros(batch_size, target_l))
                 local attn_positions_w = localize(torch.zeros(batch_size, target_l))
                 rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
@@ -699,23 +851,23 @@ function model:step(batch, forward_only, beam_size, trie)
                     self.decoder_clones[t]:evaluate()
                     local decoder_input
                     if t == 1 then
-                        decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                        decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                     else
-                        decoder_input = {labels[{{1,batch_size},t-1}], context, table.unpack(rnn_state_dec[t-1])}
+                        decoder_input = {labels[{{1,batch_size},t-1}], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                     end
                     local out = self.decoder_clones[t]:forward(decoder_input)
                     -- print attn
-                    attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
-                    local _, attn_inds = torch.max(self.softmax_attn_clones[t].output, 2) --batch_size, 1
-                    attn_inds = attn_inds:view(-1) --batch_size
-                    for kk = 1, batch_size do
-                        local counter = attn_inds[kk]
-                        local p_i = math.floor((counter-1) / source_l) + 1
-                        local p_t = counter-1 - (p_i-1)*source_l + 1
-                        attn_positions_h[kk][t] = p_i
-                        attn_positions_w[kk][t] = p_t
-                        --print (string.format('%d, %d', p_i, p_t))
-                    end
+                    --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
+                    --local _, attn_inds = torch.max(self.softmax_attn_clones[t].output, 2) --batch_size, 1
+                    --attn_inds = attn_inds:view(-1) --batch_size
+                    --for kk = 1, batch_size do
+                    --    local counter = attn_inds[kk]
+                    --    local p_i = math.floor((counter-1) / imgW_fine) + 1
+                    --    local p_t = counter-1 - (p_i-1)*imgW_fine + 1
+                    --    attn_positions_h[kk][t] = p_i
+                    --    attn_positions_w[kk][t] = p_t
+                    --    --print (string.format('%d, %d', p_i, p_t))
+                    --end
                         --for kk = 1, fea_inds:size(1) do
                     local next_state = {}
                     --table.insert(preds, out[#out])
@@ -758,7 +910,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 for t = 1, target_l do
                     self.decoder_clones[t]:evaluate()
                     local decoder_input
-                    decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                    decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                     local out = self.decoder_clones[t]:forward(decoder_input)
                     local next_state = {}
                     local pred = self.output_projector:forward(out[#out]) --batch_size, vocab_size
@@ -773,122 +925,247 @@ function model:step(batch, forward_only, beam_size, trie)
                     rnn_state_dec[t] = next_state
                 end
         else
-            local encoder_fw_grads = self.encoder_fw_grad_proto[{{1, batch_size}, {1, source_l*imgH}}]
-            local encoder_bw_grads = self.encoder_bw_grad_proto[{{1, batch_size}, {1, source_l*imgH}}]
+            local encoder_fine_fw_grads = self.encoder_fine_fw_grad_proto[{{1, batch_size}, {1, imgW_fine*imgH_fine}}]
+            local encoder_fine_bw_grads = self.encoder_fine_bw_grad_proto[{{1, batch_size}, {1, imgW_fine*imgH_fine}}]
+            local encoder_coarse_fw_grads = self.encoder_coarse_fw_grad_proto[{{1, batch_size}, {1, imgW_coarse*imgH_coarse}}]
+            local encoder_coarse_bw_grads = self.encoder_coarse_bw_grad_proto[{{1, batch_size}, {1, imgW_coarse*imgH_coarse}}]
+            local reshaper_grads = self.reshaper_grad_proto[{{1,batch_size}, {1,imgW_coarse*imgH_coarse}, {}, {}}]
             for i = 1, #self.grad_params do
-                self.grad_params[i]:zero()
+                if self.grad_params[i] ~= nil then
+                    self.grad_params[i]:zero()
+                end
             end
-            encoder_fw_grads:zero()
-            encoder_bw_grads:zero()
+            encoder_fine_fw_grads:zero()
+            encoder_fine_bw_grads:zero()
+            encoder_coarse_fw_grads:zero()
+            encoder_coarse_bw_grads:zero()
+            reshaper_grads:zero()
             local drnn_state_dec = reset_state(self.init_bwd_dec, batch_size)
+            local rewards = nil
             for t = target_l, 1, -1 do
-                local pred = self.output_projector:forward(preds[t])
-                loss = loss + self.criterion:forward(pred, target_eval[t])/batch_size
+                local pred = self.output_projector:forward(preds[t]) -- batch_size, target_vocab_size
+                pred:select(2,1):maskedFill(target_eval[t]:eq(1), 0)
+                local rewards_raw = pred:gather(2, target_eval[t]:contiguous():view(batch_size,1))
+                local num_valid = batch_size - target_eval[t]:eq(1):sum()
+                if num_valid > 0 then -- update baselines
+                    local average_reward_init = rewards_raw:sum() / num_valid
+                    if self.reward_baselines[t] == nil then
+                        self.reward_baselines[t] = average_reward_init
+                        self.sampler_fine_clones[t]:reinforce(localize(torch.zeros(batch_size)))
+                        self.sampler_coarse_clones[t]:reinforce(localize(torch.zeros(batch_size)))
+                    else
+                        if rewards == nil then
+                            rewards = rewards_raw
+                        else
+                            rewards = rewards:mul(self.discount) + rewards_raw
+                        end
+                        local rewards_norm = rewards:clone():add(-1.0*self.reward_baselines[t])
+                        rewards_norm:maskedFill(target_eval[t]:eq(1), 0)
+                        local average_reward = rewards_norm:sum() / num_valid
+                        self.sampler_fine_clones[t]:reinforce(rewards_norm:clone())
+                        self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone())
+                        self.reward_baselines[t] = (1-self.baseline_lr)*self.reward_baselines[t] + self.baseline_lr*average_reward
+                    end
+                end
+                local step_loss = self.criterion:forward(pred, target_eval[t])/batch_size
+                loss = loss + step_loss
                 local dl_dpred = self.criterion:backward(pred, target_eval[t])
                 dl_dpred:div(batch_size)
                 local dl_dtarget = self.output_projector:backward(preds[t], dl_dpred)
                 drnn_state_dec[#drnn_state_dec]:add(dl_dtarget)
-                local decoder_input = {target[t], context, table.unpack(rnn_state_dec[t-1])}
+                local decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 local dlst = self.decoder_clones[t]:backward(decoder_input, drnn_state_dec)
-                encoder_fw_grads:add(dlst[2][{{}, {}, {1,self.encoder_num_hidden}}])
-                encoder_bw_grads:add(dlst[2][{{}, {}, {self.encoder_num_hidden+1, 2*self.encoder_num_hidden}}])
+                encoder_coarse_fw_grads:add(dlst[2][{{}, {}, {1,self.encoder_num_hidden}}])
+                encoder_coarse_bw_grads:add(dlst[2][{{}, {}, {self.encoder_num_hidden+1, 2*self.encoder_num_hidden}}])
+                reshaper_grads:add(dlst[3])
                 drnn_state_dec[#drnn_state_dec]:zero()
                 if self.input_feed then
-                    drnn_state_dec[#drnn_state_dec]:copy(dlst[3])
+                    drnn_state_dec[#drnn_state_dec]:copy(dlst[self.dec_offset-1])
                 end     
                 for j = self.dec_offset, #dlst do
                     drnn_state_dec[j-self.dec_offset+1]:copy(dlst[j])
                 end
             end
-            local cnn_grad = self.cnn_grad_proto[{{1,imgH}, {1,batch_size}, {1,source_l}, {}}]
+            local cnn_fine_grad = self.cnn_fine_grad_proto[{{1,imgH_fine}, {1,batch_size}, {1,imgW_fine}, {}}]
+            local cnn_coarse_grad = self.cnn_coarse_grad_proto[{{1,imgH_coarse}, {1,batch_size}, {1,imgW_coarse}, {}}]
+            local encoder_fine_grads = self.reshaper:backward(context_fine, reshaper_grads)
+            encoder_fine_fw_grads:add(encoder_fine_grads[{{}, {}, {1,self.encoder_num_hidden}}])
+            encoder_fine_bw_grads:add(encoder_fine_grads[{{}, {}, {self.encoder_num_hidden+1,2*self.encoder_num_hidden}}])
+            -- coarse
             -- forward directional encoder
-            for i = 1, imgH do
-                local cnn_output = cnn_output_list[i]
-                source = cnn_output:transpose(1,2) -- 128,1,512
-                assert (source_l == cnn_output:size()[2])
+            for i = 1, imgH_coarse do
+                local cnn_output_coarse = cnn_output_coarse_list[i]
+                source = cnn_output_coarse:transpose(1,2) -- 128,1,512
+                assert (imgW_coarse == cnn_output_coarse:size()[2])
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
                 local pos = localize(torch.zeros(batch_size)):fill(i)
-                local pos_embedding_fw = self.pos_embedding_fw:forward(pos)
-                local pos_embedding_bw = self.pos_embedding_bw:forward(pos)
-                --local L = self.encoder_num_layers
-                --drnn_state_enc[L*2-1]:copy(drnn_state_dec[1*2-1][{{}, {1, self.encoder_num_hidden}}])
-                --drnn_state_enc[L*2]:copy(drnn_state_dec[1*2][{{}, {1, self.encoder_num_hidden}}])
+                local pos_embedding_coarse_fw = self.pos_embedding_coarse_fw:forward(pos)
+                local pos_embedding_coarse_bw = self.pos_embedding_coarse_bw:forward(pos)
                 -- forward encoder
                 local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
                 for l = 1, self.encoder_num_layers do
-                    rnn_state_enc[0][l*2-1]:copy(pos_embedding_fw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
-                    rnn_state_enc[0][l*2]:copy(pos_embedding_fw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+                    rnn_state_enc[0][l*2-1]:copy(pos_embedding_coarse_fw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                    rnn_state_enc[0][l*2]:copy(pos_embedding_coarse_fw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
                 end
-                for t = 1, source_l do
+                for t = 1, imgW_coarse do
                     if not forward_only then
-                        self.encoder_fw_clones[t]:training()
+                        self.encoder_coarse_fw_clones[t]:training()
                     else
-                        self.encoder_fw_clones[t]:evaluate()
+                        self.encoder_coarse_fw_clones[t]:evaluate()
                     end
                     local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
-                    local out = self.encoder_fw_clones[t]:forward(encoder_input)
+                    local out = self.encoder_coarse_fw_clones[t]:forward(encoder_input)
                     rnn_state_enc[t] = out
                 end
-                local rnn_state_enc_bwd = reset_state(self.init_fwd_enc, batch_size, source_l+1)
+                local rnn_state_enc_bwd = reset_state(self.init_fwd_enc, batch_size, imgW_coarse+1)
                 for l = 1, self.encoder_num_layers do
-                    rnn_state_enc_bwd[source_l+1][l*2-1]:copy(pos_embedding_bw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
-                    rnn_state_enc_bwd[source_l+1][l*2]:copy(pos_embedding_bw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+                    rnn_state_enc_bwd[imgW_coarse+1][l*2-1]:copy(pos_embedding_coarse_bw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                    rnn_state_enc_bwd[imgW_coarse+1][l*2]:copy(pos_embedding_coarse_bw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
                 end
-                for t = source_l, 1, -1 do
+                for t = imgW_coarse, 1, -1 do
                     if not forward_only then
-                        self.encoder_bw_clones[t]:training()
+                        self.encoder_coarse_bw_clones[t]:training()
                     else
-                        self.encoder_bw_clones[t]:evaluate()
+                        self.encoder_coarse_bw_clones[t]:evaluate()
                     end
                     local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
-                    local out = self.encoder_bw_clones[t]:forward(encoder_input)
+                    local out = self.encoder_coarse_bw_clones[t]:forward(encoder_input)
                     rnn_state_enc_bwd[t] = out
                 end
-                local pos_embedding_grad = self.pos_embedding_grad_fw_proto[{{1,batch_size}}]
-                for t = source_l, 1, -1 do
-                    counter = (i-1)*source_l + t
+                local pos_embedding_coarse_grad = self.pos_embedding_coarse_grad_fw_proto[{{1,batch_size}}]
+                for t = imgW_coarse, 1, -1 do
+                    counter = (i-1)*imgW_coarse + t
                     local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
-                    drnn_state_enc[#drnn_state_enc]:add(encoder_fw_grads[{{},counter}])
-                    local dlst = self.encoder_fw_clones[t]:backward(encoder_input, drnn_state_enc)
+                    drnn_state_enc[#drnn_state_enc]:add(encoder_coarse_fw_grads[{{},counter}])
+                    local dlst = self.encoder_coarse_fw_clones[t]:backward(encoder_input, drnn_state_enc)
                     for j = 1, #drnn_state_enc do
                         drnn_state_enc[j]:copy(dlst[j+1])
                     end
-                    cnn_grad[{i, {}, t, {}}]:copy(dlst[1])
+                    cnn_coarse_grad[{i, {}, t, {}}]:copy(dlst[1])
                 end
                 for l = 1, self.encoder_num_layers do
-                    pos_embedding_grad[{{}, {(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2-1])
-                    pos_embedding_grad[{{}, {(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2])
+                    pos_embedding_coarse_grad[{{}, {(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2-1])
+                    pos_embedding_coarse_grad[{{}, {(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2])
                 end
-                self.pos_embedding_fw:backward(pos, pos_embedding_grad)
+                self.pos_embedding_coarse_fw:backward(pos, pos_embedding_coarse_grad)
                 -- backward directional encoder
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
                 --local L = self.encoder_num_layers
                 --drnn_state_enc[L*2-1]:copy(drnn_state_dec[1*2-1][{{}, {self.encoder_num_hidden+1, 2*self.encoder_num_hidden}}])
                 --drnn_state_enc[L*2]:copy(drnn_state_dec[1*2][{{}, {self.encoder_num_hidden+1, 2*self.encoder_num_hidden}}])
-                for t = 1, source_l do
-                    counter = (i-1)*source_l + t
+                for t = 1, imgW_coarse do
+                    counter = (i-1)*imgW_coarse + t
                     local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
-                    drnn_state_enc[#drnn_state_enc]:add(encoder_bw_grads[{{},counter}])
-                    local dlst = self.encoder_bw_clones[t]:backward(encoder_input, drnn_state_enc)
+                    drnn_state_enc[#drnn_state_enc]:add(encoder_coarse_bw_grads[{{},counter}])
+                    local dlst = self.encoder_coarse_bw_clones[t]:backward(encoder_input, drnn_state_enc)
                     for j = 1, #drnn_state_enc do
                         drnn_state_enc[j]:copy(dlst[j+1])
                     end
                     --cnn_grad[{{}, t, {}}]:add(dlst[1])
-                    cnn_grad[{i, {}, t, {}}]:add(dlst[1])
+                    cnn_coarse_grad[{i, {}, t, {}}]:add(dlst[1])
                 end
-                local pos_embedding_grad = self.pos_embedding_grad_fw_proto[{{1,batch_size}}]
+                local pos_embedding_coarse_grad = self.pos_embedding_coarse_grad_fw_proto[{{1,batch_size}}]
                 for l = 1, self.encoder_num_layers do
-                    pos_embedding_grad[{{}, {(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2-1])
-                    pos_embedding_grad[{{}, {(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2])
+                    pos_embedding_coarse_grad[{{}, {(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2-1])
+                    pos_embedding_coarse_grad[{{}, {(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2])
                 end
-                self.pos_embedding_bw:backward(pos, pos_embedding_grad)
+                self.pos_embedding_coarse_bw:backward(pos, pos_embedding_coarse_grad)
             end
             -- cnn
-            local cnn_final_grad = cnn_grad:split(1, 1)
-            for i = 1, #cnn_final_grad do
-                cnn_final_grad[i] = cnn_final_grad[i]:contiguous():view(batch_size, source_l, -1)
+            local cnn_final_coarse_grad = cnn_coarse_grad:split(1, 1)
+            for i = 1, #cnn_final_coarse_grad do
+                cnn_final_coarse_grad[i] = cnn_final_coarse_grad[i]:contiguous():view(batch_size, imgW_coarse, -1)
             end
-            self.cnn_model:backward(input_batch, cnn_final_grad)
+
+
+            -- fine
+            -- forward directional encoder
+            for i = 1, imgH_fine do
+                local cnn_output_fine = cnn_output_fine_list[i]
+                source = cnn_output_fine:transpose(1,2) -- 128,1,512
+                assert (imgW_fine == cnn_output_fine:size()[2])
+                local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
+                local pos = localize(torch.zeros(batch_size)):fill(i)
+                local pos_embedding_fine_fw = self.pos_embedding_fine_fw:forward(pos)
+                local pos_embedding_fine_bw = self.pos_embedding_fine_bw:forward(pos)
+                -- forward encoder
+                local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
+                for l = 1, self.encoder_num_layers do
+                    rnn_state_enc[0][l*2-1]:copy(pos_embedding_fine_fw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                    rnn_state_enc[0][l*2]:copy(pos_embedding_fine_fw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+                end
+                for t = 1, imgW_fine do
+                    if not forward_only then
+                        self.encoder_fine_fw_clones[t]:training()
+                    else
+                        self.encoder_fine_fw_clones[t]:evaluate()
+                    end
+                    local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
+                    local out = self.encoder_fine_fw_clones[t]:forward(encoder_input)
+                    rnn_state_enc[t] = out
+                end
+                local rnn_state_enc_bwd = reset_state(self.init_fwd_enc, batch_size, imgW_fine+1)
+                for l = 1, self.encoder_num_layers do
+                    rnn_state_enc_bwd[imgW_fine+1][l*2-1]:copy(pos_embedding_fine_bw[{{},{(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}])
+                    rnn_state_enc_bwd[imgW_fine+1][l*2]:copy(pos_embedding_fine_bw[{{},{(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}])
+                end
+                for t = imgW_fine, 1, -1 do
+                    if not forward_only then
+                        self.encoder_fine_bw_clones[t]:training()
+                    else
+                        self.encoder_fine_bw_clones[t]:evaluate()
+                    end
+                    local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
+                    local out = self.encoder_fine_bw_clones[t]:forward(encoder_input)
+                    rnn_state_enc_bwd[t] = out
+                end
+                local pos_embedding_fine_grad = self.pos_embedding_fine_grad_fw_proto[{{1,batch_size}}]
+                for t = imgW_fine, 1, -1 do
+                    counter = (i-1)*imgW_fine + t
+                    local encoder_input = {source[t], table.unpack(rnn_state_enc[t-1])}
+                    drnn_state_enc[#drnn_state_enc]:add(encoder_fine_fw_grads[{{},counter}])
+                    local dlst = self.encoder_fine_fw_clones[t]:backward(encoder_input, drnn_state_enc)
+                    for j = 1, #drnn_state_enc do
+                        drnn_state_enc[j]:copy(dlst[j+1])
+                    end
+                    cnn_fine_grad[{i, {}, t, {}}]:copy(dlst[1])
+                end
+                for l = 1, self.encoder_num_layers do
+                    pos_embedding_fine_grad[{{}, {(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2-1])
+                    pos_embedding_fine_grad[{{}, {(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2])
+                end
+                self.pos_embedding_fine_fw:backward(pos, pos_embedding_fine_grad)
+                -- backward directional encoder
+                local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
+                --local L = self.encoder_num_layers
+                --drnn_state_enc[L*2-1]:copy(drnn_state_dec[1*2-1][{{}, {self.encoder_num_hidden+1, 2*self.encoder_num_hidden}}])
+                --drnn_state_enc[L*2]:copy(drnn_state_dec[1*2][{{}, {self.encoder_num_hidden+1, 2*self.encoder_num_hidden}}])
+                for t = 1, imgW_fine do
+                    counter = (i-1)*imgW_fine + t
+                    local encoder_input = {source[t], table.unpack(rnn_state_enc_bwd[t+1])}
+                    drnn_state_enc[#drnn_state_enc]:add(encoder_fine_bw_grads[{{},counter}])
+                    local dlst = self.encoder_fine_bw_clones[t]:backward(encoder_input, drnn_state_enc)
+                    for j = 1, #drnn_state_enc do
+                        drnn_state_enc[j]:copy(dlst[j+1])
+                    end
+                    --cnn_grad[{{}, t, {}}]:add(dlst[1])
+                    cnn_fine_grad[{i, {}, t, {}}]:add(dlst[1])
+                end
+                local pos_embedding_fine_grad = self.pos_embedding_fine_grad_fw_proto[{{1,batch_size}}]
+                for l = 1, self.encoder_num_layers do
+                    pos_embedding_fine_grad[{{}, {(l*2-2)*self.encoder_num_hidden+1, (l*2-1)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2-1])
+                    pos_embedding_fine_grad[{{}, {(l*2-1)*self.encoder_num_hidden+1, (l*2)*self.encoder_num_hidden}}]:copy(drnn_state_enc[l*2])
+                end
+                self.pos_embedding_fine_bw:backward(pos, pos_embedding_fine_grad)
+            end
+            -- cnn
+            local cnn_final_fine_grad = cnn_fine_grad:split(1, 1)
+            for i = 1, #cnn_final_fine_grad do
+                cnn_final_fine_grad[i] = cnn_final_fine_grad[i]:contiguous():view(batch_size, imgW_fine, -1)
+            end
+            
+            
+            self.cnn_model:backward(input_batch, {cnn_final_fine_grad, cnn_final_coarse_grad})
             collectgarbage()
         end
         return loss, self.grad_params, {num_nonzeros, accuracy}
@@ -931,7 +1208,7 @@ function model:vis(output_dir)
             end)
             assert (decoder_attn)
             decoder_attn:apply(function (layer)
-                if layer.name == 'softmax_attn' then
+                if layer.name == 'mul_attn' then
                     self.softmax_attn_clones[i] = layer
                 end
             end)
@@ -942,9 +1219,11 @@ end
 -- Save model to model_path
 function model:save(model_path)
     for i = 1, #self.layers do
-        self.layers[i]:clearState()
+        if i ~= 77 then
+            self.layers[i]:clearState()
+        end
     end
-    torch.save(model_path, {{self.cnn_model, self.encoder_fw, self.encoder_bw, self.decoder, self.output_projector, self.pos_embedding_fw, self.pos_embedding_bw}, self.config, self.global_step, self.optim_state, id2vocab})
+    torch.save(model_path, {{self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}, self.config, self.global_step, self.optim_state, id2vocab, self.reward_baselines})
 end
 
 function model:shutdown()
