@@ -27,9 +27,10 @@ cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
 
 -- Display
-cmd:option('-steps_per_checkpoint', 100, [[Checkpointing (print perplexity, save model) per how many steps]])
+cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
 cmd:option('-num_batches_val', math.huge, [[Number of batches to evaluate.]])
 cmd:option('-beam_size', 1, [[Beam size.]])
+
 cmd:option('-use_dictionary', false, [[Use dictionary during decoding or not.]])
 cmd:option('-allow_digit_prefix', false, [[During decoding, allow arbitary digits before word.]])
 cmd:option('-dictionary_path', '/n/rush_lab/data/image_data/train_dictionary.txt', [[The path containing dictionary. Format per line: word]])
@@ -38,10 +39,10 @@ cmd:option('-dictionary_path', '/n/rush_lab/data/image_data/train_dictionary.txt
 cmd:text('')
 cmd:text('**Optimization**')
 cmd:text('')
-cmd:option('-num_epochs', 15, [[The number of whole data passes]])
+cmd:option('-num_epochs', 1500, [[The number of whole data passes]])
 cmd:option('-batch_size', 1, [[Batch size]])
 cmd:option('-learning_rate', 0.1, [[Initial learning rate]])
-cmd:option('-learning_rate_min', 0.00001, [[Initial learning rate]])
+cmd:option('-learning_rate_min', 0.005, [[Initial learning rate]])
 cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
 
@@ -52,7 +53,7 @@ cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cel
 cmd:option('-encoder_num_hidden', 256, [[Number of hidden units in encoder cell]])
 cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]]) -- does not support >1 now!!!
 cmd:option('-decoder_num_layers', 1, [[Number of hidden units in decoder cell]])
-cmd:option('-vocab_file', '', [[Vocabulary file. A token per line.]])
+cmd:option('-vocab_file', 'latex_vocab.txt', [[Vocabulary file. A token per line.]])
 
 -- Reinforce
 cmd:option('-entropy_scale', 0.002, [[Scale entropy term]])
@@ -84,7 +85,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local accuracy = 0
     local forward_only
     local learning_rate = model.optim_state.learningRate or learning_rate_init
-    learning_rate = math.max(learning_rate, opt.learning_rate_min)
+    learning_rate = 0.1--math.max(learning_rate, opt.learning_rate_min)
     model.optim_state.learningRate = learning_rate
     logging:info(string.format('Lr: %f', learning_rate))
     if phase == 'train' then
@@ -164,7 +165,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             local val_num_nonzeros = 0
             local val_accuracy = 0
             local b = 1
-            while b <= num_batches_val do
+            while false and b <= num_batches_val do
                 val_batch = val_data:nextBatch(batch_size)
                 if val_batch == nil then
                     if num_batches_val < math.huge then

@@ -133,8 +133,8 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
 
 
      -- add entropy term
-     local grad_ent = self._input:log():add(1)
-     self.gradInput:add(self.entropy_scale, grad_ent)
+     --local grad_ent = self._input:log():add(1) / batch_size?
+     --self.gradInput:add(self.entropy_scale, grad_ent)
    end
    return self.gradInput
 end

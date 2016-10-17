@@ -153,7 +153,8 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
   attn_coarse = softmax_attn_coarse(attn_coarse) -- batch_size x imgH_coarse*imgW_coarse
 
   -- sample from attn_coarse
-  local sampler_coarse = nn.ReinforceCategorical(entropy_scale, semi_sampling_p)
+  local sampler_coarse = nn.ReinforceCategorical(entropy_scale, semi_sampling_p):usePrealloc("sampler_coarse",
+                                    {{batch_size,max_encoder_coarse_l}}, {{batch_size, max_encoder_coarse_l}})
   sampler_coarse.name = 'sampler_coarse'
   attn_coarse = sampler_coarse(attn_coarse) --batch_size x imgH_coarse*imgW_coarse
 
@@ -168,10 +169,11 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
   attn_fine = nn.View(-1):setNumInputDims(1)(nn.ViewAs(3)({attn_fine, context_fine})) -- (batch_size*imgH_coarse*imgW_coarse) x fine
   local softmax_attn_fine = nn.SoftMax()
   softmax_attn_fine.name = 'softmax_attn_fine'
-  attn_fine = softmax_attn_fine(attn_fine) -- batch_size x imgH_coarse*imgW_coarse
+  attn_fine = softmax_attn_fine(attn_fine) -- 
 
   -- sample from attn_fine
-  local sampler_fine = nn.ReinforceCategorical(entropy_scale, semi_sampling_p)
+  local sampler_fine = nn.ReinforceCategorical(entropy_scale, semi_sampling_p):usePrealloc("sampler_fine",
+                                    {{batch_size*max_encoder_coarse_l, fine}}, {{batch_size*max_encoder_coarse_l, fine}})
   sampler_fine.name = 'sampler_fine'
   attn_fine = sampler_fine(attn_fine) --batch_size x imgH_coarse*imgW_coarse
   attn_fine = nn.ViewAs(3)({attn_fine, context_fine}) -- batch_size x imgH_coarse*imgW_coarse x fine
@@ -201,5 +203,6 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
     context_output = nn.CAddTable():usePrealloc("dec_attn_caddtable1",
     {{batch_size, num_hidden}, {batch_size, num_hidden}})({context_combined,inputs[1]})
   end   
+  --return nn.gModule(inputs, {nn.CAddTable()({inputs[1],nn.MulConstant(0)(context_output)})})   
   return nn.gModule(inputs, {context_output})   
 end

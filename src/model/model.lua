@@ -265,7 +265,24 @@ function model:_build()
     self.encoder_fine_bw_clones = clone_many_times(self.encoder_fine_bw, self.max_encoder_fine_l_w)
     self.encoder_coarse_fw_clones = clone_many_times(self.encoder_coarse_fw, self.max_encoder_coarse_l_w)
     self.encoder_coarse_bw_clones = clone_many_times(self.encoder_coarse_bw, self.max_encoder_coarse_l_w)
-    
+   
+    self.softmax_attn_clones={}
+        for i = 1, #self.decoder_clones do
+            local decoder = self.decoder_clones[i]
+            local decoder_attn
+            decoder:apply(function (layer) 
+                if layer.name == 'decoder_attn' then
+                    decoder_attn = layer
+                end
+            end)
+            assert (decoder_attn)
+            decoder:apply(function (layer)
+                if layer.name == 'mul_attn' then
+                    self.softmax_attn_clones[i] = layer
+                end
+            end)
+            assert (self.softmax_attn_clones[i])
+        end
     for i = 1, #self.encoder_fine_fw_clones do
         if self.encoder_fine_fw_clones[i].apply then
             self.encoder_fine_fw_clones[i]:apply(function(m) m:setReuse() end)
@@ -432,7 +449,7 @@ function model:step(batch, forward_only, beam_size, trie)
             local pos_embedding_fine_fw  = self.pos_embedding_fine_fw:forward(pos)
             local pos_embedding_fine_bw  = self.pos_embedding_fine_bw:forward(pos)
             local cnn_output = cnn_output_fine_list[i] --1, imgW, 512
-            source = cnn_output:transpose(1,2) -- imgW,1,512
+            local source = cnn_output:transpose(1,2) -- imgW,1,512
             -- forward encoder
             local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
             for l = 1, self.encoder_num_layers do
@@ -487,7 +504,7 @@ function model:step(batch, forward_only, beam_size, trie)
             local pos_embedding_coarse_fw  = self.pos_embedding_coarse_fw:forward(pos)
             local pos_embedding_coarse_bw  = self.pos_embedding_coarse_bw:forward(pos)
             local cnn_output = cnn_output_coarse_list[i] --1, imgW, 512
-            source = cnn_output:transpose(1,2) -- imgW,1,512
+            local source = cnn_output:transpose(1,2) -- imgW,1,512
             -- forward encoder
             local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
             for l = 1, self.encoder_num_layers do
@@ -962,8 +979,8 @@ function model:step(batch, forward_only, beam_size, trie)
                         local rewards_norm = rewards:clone():add(-1.0*self.reward_baselines[t])
                         rewards_norm:maskedFill(target_eval[t]:eq(1), 0)
                         local average_reward = rewards_norm:sum() / num_valid
-                        self.sampler_fine_clones[t]:reinforce(rewards_norm:clone())
-                        self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone())
+                        self.sampler_fine_clones[t]:reinforce(rewards_norm:clone():div(batch_size))
+                        self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone():div(batch_size))
                         self.reward_baselines[t] = (1-self.baseline_lr)*self.reward_baselines[t] + self.baseline_lr*average_reward
                     end
                 end
@@ -995,7 +1012,7 @@ function model:step(batch, forward_only, beam_size, trie)
             -- forward directional encoder
             for i = 1, imgH_coarse do
                 local cnn_output_coarse = cnn_output_coarse_list[i]
-                source = cnn_output_coarse:transpose(1,2) -- 128,1,512
+                local source = cnn_output_coarse:transpose(1,2) -- 128,1,512
                 assert (imgW_coarse == cnn_output_coarse:size()[2])
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
                 local pos = localize(torch.zeros(batch_size)):fill(i)
@@ -1082,7 +1099,7 @@ function model:step(batch, forward_only, beam_size, trie)
             -- forward directional encoder
             for i = 1, imgH_fine do
                 local cnn_output_fine = cnn_output_fine_list[i]
-                source = cnn_output_fine:transpose(1,2) -- 128,1,512
+                local source = cnn_output_fine:transpose(1,2) -- 128,1,512
                 assert (imgW_fine == cnn_output_fine:size()[2])
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
                 local pos = localize(torch.zeros(batch_size)):fill(i)
@@ -1207,7 +1224,7 @@ function model:vis(output_dir)
                 end
             end)
             assert (decoder_attn)
-            decoder_attn:apply(function (layer)
+            decoder:apply(function (layer)
                 if layer.name == 'mul_attn' then
                     self.softmax_attn_clones[i] = layer
                 end
