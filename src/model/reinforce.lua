@@ -75,9 +75,9 @@ function ReinforceCategorical:_doSample(input)
       self.output:copy(input)
    else
       -- sample from categorical with p = input
-      self._input = self._input or input.new()
+      local _input = input.new()
       -- prevent division by zero error (see updateGradInput)
-      self._input:resizeAs(input):copy(input):add(0.00000001) 
+      _input:resizeAs(input):copy(input):add(0.00000001) 
 
       input.multinomial(self._index, input, 1)
       -- one hot encoding
@@ -113,12 +113,12 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
    if self._do_through == true then
      -- identity function
      self.gradInput:copy(gradOutput)
-   else 
+   else
      self.gradInput:copy(self.output)
-     self._input = self._input or input.new()
+     local _input = input.new()
      -- prevent division by zero error
-     self._input:resizeAs(input):copy(input):add(0.00000001) 
-     self.gradInput:cdiv(self._input)
+     _input:resizeAs(input):copy(input):add(0.00000001) 
+     self.gradInput:cdiv(_input)
      
      -- multiply by reward 
      -- multiply by -1 ( gradient descent on input )
@@ -133,8 +133,8 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
 
 
      -- add entropy term
-     --local grad_ent = self._input:log():add(1) / batch_size?
-     --self.gradInput:add(self.entropy_scale, grad_ent)
+     local grad_ent = _input:log():add(1)
+     self.gradInput:add(self.entropy_scale/batch_size, grad_ent)
    end
    return self.gradInput
 end

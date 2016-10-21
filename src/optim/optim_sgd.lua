@@ -48,8 +48,8 @@ function optim.sgd_list(opfunc, x, config, state)
            local y = x[i]
            local dfdy = dfdx[i]
            print (string.format('i: %d, para norm: %f, grad norm: %f', i, y:norm(), dfdy:norm()))
-           if dfdy:norm() > 5.0 then
-               dfdy:mul(5.0/dfdy:norm())
+           if dfdy:norm() > 10.0 then
+               dfdy:mul(10.0/dfdy:norm())
            end
 
            -- (2) weight decay with single or individual parameters

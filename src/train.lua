@@ -57,7 +57,7 @@ cmd:option('-vocab_file', 'latex_vocab.txt', [[Vocabulary file. A token per line
 
 -- Reinforce
 cmd:option('-entropy_scale', 0.002, [[Scale entropy term]])
-cmd:option('-semi_sampling_p', 1.0, [[Probability of passing params through over sampling,
+cmd:option('-semi_sampling_p', 0.0, [[Probability of passing params through over sampling,
                                     set 0 to always sample]])
 cmd:option('-baseline_lr', 0.1, [[Learning rate for averaged baseline, b_{k+1} = (1-lr)*b_k + lr*r]])
 cmd:option('-discount', 0.5, [[Discount factor for rewards, between 0 and 1]])
@@ -85,7 +85,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local accuracy = 0
     local forward_only
     local learning_rate = model.optim_state.learningRate or learning_rate_init
-    learning_rate = 0.1--math.max(learning_rate, opt.learning_rate_min)
+    learning_rate = 0.03--math.max(learning_rate, opt.learning_rate_min)
     model.optim_state.learningRate = learning_rate
     logging:info(string.format('Lr: %f', learning_rate))
     if phase == 'train' then
@@ -165,7 +165,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             local val_num_nonzeros = 0
             local val_accuracy = 0
             local b = 1
-            while false and b <= num_batches_val do
+            while b <= num_batches_val do
                 val_batch = val_data:nextBatch(batch_size)
                 if val_batch == nil then
                     if num_batches_val < math.huge then
