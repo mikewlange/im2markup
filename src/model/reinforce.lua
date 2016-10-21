@@ -74,6 +74,10 @@ function ReinforceCategorical:_doSample(input)
       -- use p
       self.output:copy(input)
    else
+     --if self.name == 'sampler_coarse' and output_flag then
+     --      print ('here')
+     --      print (input[1])
+     --  end
       -- sample from categorical with p = input
       local _input = input.new()
       -- prevent division by zero error (see updateGradInput)
@@ -117,7 +121,7 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
      self.gradInput:copy(self.output)
      local _input = input.new()
      -- prevent division by zero error
-     _input:resizeAs(input):copy(input):add(0.00000001) 
+     _input:resizeAs(input):copy(input):add(0.000000000000001) 
      self.gradInput:cdiv(_input)
      
      -- multiply by reward 
@@ -135,6 +139,14 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
      -- add entropy term
      local grad_ent = _input:log():add(1)
      self.gradInput:add(self.entropy_scale/batch_size, grad_ent)
+     --if self.name == 'sampler_coarse' and output_flag then
+     --    print ('input:')
+     --print (input[1])
+     --    print ('gradinput:')
+     --print (self.gradInput[1])
+     --    print ('output:')
+     --    print (self.output[1])
+     --end
    end
    return self.gradInput
 end

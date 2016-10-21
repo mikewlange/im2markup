@@ -794,21 +794,13 @@ function model:step(batch, forward_only, beam_size, trie)
         else -- forward_only == false
             -- set decoder states
             rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
-            -- not use encoder final state to initialize the first layer
-            -- local L = self.encoder_num_layers
-            --if self.input_feed then
-            --    rnn_state_dec[0][1*2-1+1]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
-            --    rnn_state_dec[0][1*2+1]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
-            --else
-            --    rnn_state_dec[0][1*2-1+0]:copy(torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1]))
-            --    rnn_state_dec[0][1*2+0]:copy(torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2]))
-            --end
-            --for L = 2, self.decoder_num_layers do
-            --    rnn_state_dec[0][L*2-1+0]:zero()
-            --    rnn_state_dec[0][L*2+0]:zero()
-            --end
             for t = 1, target_l do
-                self.decoder_clones[t]:evaluate()
+                self.decoder_clones[t]:training()
+                if t == 1 then 
+                    output_flag= true
+                else
+                    output_flag = false
+                end
                 local decoder_input
                 decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
@@ -884,11 +876,13 @@ function model:step(batch, forward_only, beam_size, trie)
                     local out = self.decoder_clones[t]:forward(decoder_input)
                     -- print attn
                     --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
-                    local _, attn_inds = torch.max(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
+                    local _, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
                     attn_inds = attn_inds:view(-1) --batch_size
                     local i_H = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] / imgW_coarse) + 1
                     local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse)
+                    if t==1 then
                     print (string.format('%d, %d', i_H, i_W))
+                end
                     --for kk = 1, batch_size do
                     --    local counter = attn_inds[kk]
                     --    local p_i = math.floor((counter-1) / imgW_fine) + 1
@@ -972,10 +966,29 @@ function model:step(batch, forward_only, beam_size, trie)
             reshaper_grads:zero()
             local drnn_state_dec = reset_state(self.init_bwd_dec, batch_size)
             local rewards = nil -- current reward before subtracting baselines
+            print (self.reward_baselines[1])
             for t = target_l, 1, -1 do
+                if t == 80 then 
+                    output_flag= true
+                else
+                    output_flag = false
+                end
+                    -- print attn
+                    --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
+                    local attn_vals, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
+                    attn_inds = attn_inds:view(-1) --batch_size
+                    attn_vals = attn_vals:view(-1)
+                    local i_H = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] / imgW_coarse) + 1
+                    local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse)
+                    --if t==1 then
+                    --    print (string.format('%d, %d', i_H, i_W))
+                    --end
                 local pred = self.output_projector:forward(preds[t]) -- batch_size, target_vocab_size
                 pred:select(2,1):maskedFill(target_eval[t]:eq(1), 0)
                 local rewards_raw = pred:gather(2, target_eval[t]:contiguous():view(batch_size,1))
+                --if t== 1 then
+                --    print (rewards_raw[1])
+                --end
                 local num_valid = batch_size - target_eval[t]:eq(1):sum()
                 -- normed reward
                 local rewards_norm
@@ -989,25 +1002,26 @@ function model:step(batch, forward_only, beam_size, trie)
                     self.sampler_fine_clones[t]:reinforce(localize(torch.zeros(batch_size)))
                     self.sampler_coarse_clones[t]:reinforce(localize(torch.zeros(batch_size)))
                 else
-                    local rewards_norm = rewards:clone()--:add(-1.0*self.reward_baselines[t])
+                    local rewards_norm = rewards:clone():add(-1.0*self.reward_baselines[t])
                     rewards_norm:maskedFill(target_eval[t]:eq(1), 0)
-                    self.sampler_fine_clones[t]:reinforce(rewards_norm:clone():div(batch_size/0.04))
-                    self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone():div(batch_size/0.04))
+                    --self.sampler_fine_clones[t]:reinforce(localize(torch.zeros(batch_size)))--rewards_norm:clone():div(batch_size/0.004))
+                    self.sampler_fine_clones[t]:reinforce(rewards_norm:clone():div(batch_size/0.1))
+                    --self.sampler_coarse_clones[t]:reinforce(localize(torch.zeros(batch_size)))--rewards_norm:clone():div(batch_size/0.004))
+                    self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone():div(batch_size/0.1))
                 end
                     
                 if num_valid > 0 then -- update baselines
-                    local average_reward_init = rewards:sum() / num_valid
+                    local average_reward = rewards:sum() / num_valid
                     if self.reward_baselines[t] == nil then
-                        self.reward_baselines[t] = average_reward_init
+                        self.reward_baselines[t] = average_reward
                     else
-                        local average_reward = rewards:sum() / num_valid
                         self.reward_baselines[t] = (1-self.baseline_lr)*self.reward_baselines[t] + self.baseline_lr*average_reward
                     end
                 end
                 local step_loss = self.criterion:forward(pred, target_eval[t])/batch_size
                 loss = loss + step_loss
                 local dl_dpred = self.criterion:backward(pred, target_eval[t])
-                dl_dpred:div(batch_size)
+                dl_dpred:div(batch_size)--:zero()
                 local dl_dtarget = self.output_projector:backward(preds[t], dl_dpred)
                 drnn_state_dec[#drnn_state_dec]:add(dl_dtarget)
                 local decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
