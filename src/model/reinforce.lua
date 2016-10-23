@@ -59,6 +59,9 @@ function ReinforceCategorical:__init(entropy_scale, semi_sampling_p)
 end
 
 function ReinforceCategorical:_doArgmax(input)
+     if self.name == 'sampler_coarse' and output_flag then
+           print (input[1])
+       end
    self.output:zero()
    _, self._index = input:max(2)
    self.output:scatter(2, self._index, 1)
@@ -139,14 +142,14 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
      -- add entropy term
      local grad_ent = _input:log():add(1)
      self.gradInput:add(self.entropy_scale/batch_size, grad_ent)
-     --if self.name == 'sampler_coarse' and output_flag then
-     --    print ('input:')
-     --print (input[1])
-     --    print ('gradinput:')
-     --print (self.gradInput[1])
-     --    print ('output:')
-     --    print (self.output[1])
-     --end
+     if self.name == 'sampler_coarse' and output_flag then
+         print ('input:')
+     print (input[1])
+         print ('gradinput:')
+     print (self.gradInput[1])
+         print ('output:')
+         print (self.output[1])
+     end
    end
    return self.gradInput
 end

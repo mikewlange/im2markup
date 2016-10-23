@@ -876,13 +876,20 @@ function model:step(batch, forward_only, beam_size, trie)
                     local out = self.decoder_clones[t]:forward(decoder_input)
                     -- print attn
                     --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
-                    local _, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
+                    local _, attn_inds = torch.max(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
                     attn_inds = attn_inds:view(-1) --batch_size
                     local i_H = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] / imgW_coarse) + 1
-                    local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse)
-                    if t==1 then
-                    print (string.format('%d, %d', i_H, i_W))
-                end
+                    local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse) + 1
+                    local i_H_fine = math.floor((attn_inds[1]-1 - self.fine[1]*self.fine[2]*((i_H-1)*imgW_coarse + i_W-1)) / self.fine[2]) + 1
+                    local i_W_fine = math.floor(attn_inds[1]-1 - self.fine[1]*self.fine[2]*((i_H-1)*imgW_coarse+i_W-1)) - (i_H_fine-1)*self.fine[2] + 1
+                    --if t == 80 then
+                    --    output_flag = true
+                    --else
+                    --    output_flag = false
+                    --end
+                    if t<100 then
+                        print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
+                    end
                     --for kk = 1, batch_size do
                     --    local counter = attn_inds[kk]
                     --    local p_i = math.floor((counter-1) / imgW_fine) + 1

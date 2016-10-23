@@ -56,10 +56,10 @@ cmd:option('-decoder_num_layers', 1, [[Number of hidden units in decoder cell]])
 cmd:option('-vocab_file', 'latex_vocab.txt', [[Vocabulary file. A token per line.]])
 
 -- Reinforce
-cmd:option('-entropy_scale', 0.002, [[Scale entropy term]])
+cmd:option('-entropy_scale', 0.0002, [[Scale entropy term]])
 cmd:option('-semi_sampling_p', 0.0, [[Probability of passing params through over sampling,
                                     set 0 to always sample]])
-cmd:option('-baseline_lr', 0.05, [[Learning rate for averaged baseline, b_{k+1} = (1-lr)*b_k + lr*r]])
+cmd:option('-baseline_lr', 0.01, [[Learning rate for averaged baseline, b_{k+1} = (1-lr)*b_k + lr*r]])
 cmd:option('-discount', 0.5, [[Discount factor for rewards, between 0 and 1]])
 
 -- Other
@@ -114,7 +114,6 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
         while true do
             print ('new batch')
             train_batch = train_data:nextBatch(batch_size)
-            for num_repeat = 1, 1 do
             if train_batch == nil then
                 break
             end
@@ -157,7 +156,6 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                     accuracy = 0
                     collectgarbage()
                 end
-            end
             end
         end -- while true
         if not forward_only then
