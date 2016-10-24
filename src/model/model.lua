@@ -796,11 +796,11 @@ function model:step(batch, forward_only, beam_size, trie)
             rnn_state_dec = reset_state(self.init_fwd_dec, batch_size, 0)
             for t = 1, target_l do
                 self.decoder_clones[t]:training()
-                if t == 1 then 
-                    output_flag= true
-                else
-                    output_flag = false
-                end
+                --if t == 1 then 
+                --    output_flag= true
+                --else
+                --    output_flag = false
+                --end
                 local decoder_input
                 decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
@@ -887,9 +887,9 @@ function model:step(batch, forward_only, beam_size, trie)
                     --else
                     --    output_flag = false
                     --end
-                    if t<100 then
-                        print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
-                    end
+                    --if t<100 then
+                    --    print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
+                    --end
                     --for kk = 1, batch_size do
                     --    local counter = attn_inds[kk]
                     --    local p_i = math.floor((counter-1) / imgW_fine) + 1
@@ -975,11 +975,11 @@ function model:step(batch, forward_only, beam_size, trie)
             local rewards = nil -- current reward before subtracting baselines
             print (self.reward_baselines[1])
             for t = target_l, 1, -1 do
-                if t == 80 then 
-                    output_flag= true
-                else
-                    output_flag = false
-                end
+                --if t == 80 then 
+                --    output_flag= true
+                --else
+                --    output_flag = false
+                --end
                     -- print attn
                     --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
                     local attn_vals, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1

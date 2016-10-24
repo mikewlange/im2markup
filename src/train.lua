@@ -41,7 +41,7 @@ cmd:text('**Optimization**')
 cmd:text('')
 cmd:option('-num_epochs', 1500, [[The number of whole data passes]])
 cmd:option('-batch_size', 1, [[Batch size]])
-cmd:option('-learning_rate', 0.1, [[Initial learning rate]])
+cmd:option('-learning_rate', 0.01, [[Initial learning rate]])
 cmd:option('-learning_rate_min', 0.005, [[Initial learning rate]])
 cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
@@ -69,7 +69,7 @@ cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-visualize', false, [[Print results or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
 cmd:option('-max_num_tokens', 150, [[Maximum number of output tokens]]) -- when evaluate, this is the cut-off length.
-cmd:option('-max_image_width', 500, [[Maximum length of input feature sequence along width direction]]) --800/2/2/2
+cmd:option('-max_image_width', 480, [[Maximum length of input feature sequence along width direction]]) --800/2/2/2
 cmd:option('-max_image_height', 160, [[Maximum length of input feature sequence along width direction]]) --80 / (2*2*2)
 cmd:option('-prealloc', false, [[Use memory preallocation and sharing between cloned encoder/decoders]])
 
@@ -85,7 +85,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local accuracy = 0
     local forward_only
     local learning_rate = model.optim_state.learningRate or learning_rate_init
-    learning_rate = 0.01--math.max(learning_rate, opt.learning_rate_min)
+    learning_rate = math.max(learning_rate, opt.learning_rate_min)
     model.optim_state.learningRate = learning_rate
     logging:info(string.format('Lr: %f', learning_rate))
     if phase == 'train' then
@@ -112,7 +112,6 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             logging:info(string.format('Decay lr, current lr: %f', learning_rate))
         end
         while true do
-            print ('new batch')
             train_batch = train_data:nextBatch(batch_size)
             if train_batch == nil then
                 break
