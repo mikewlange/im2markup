@@ -874,6 +874,7 @@ function model:step(batch, forward_only, beam_size, trie)
                         decoder_input = {labels[{{1,batch_size},t-1}], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                     end
                     local out = self.decoder_clones[t]:forward(decoder_input)
+                    local pred = self.output_projector:forward(out[#out]) --batch_size, vocab_size
                     -- print attn
                     --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
                     local _, attn_inds = torch.max(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
@@ -882,14 +883,16 @@ function model:step(batch, forward_only, beam_size, trie)
                     local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse) + 1
                     local i_H_fine = math.floor((attn_inds[1]-1 - self.fine[1]*self.fine[2]*((i_H-1)*imgW_coarse + i_W-1)) / self.fine[2]) + 1
                     local i_W_fine = math.floor(attn_inds[1]-1 - self.fine[1]*self.fine[2]*((i_H-1)*imgW_coarse+i_W-1)) - (i_H_fine-1)*self.fine[2] + 1
-                    --if t == 80 then
-                    --    output_flag = true
-                    --else
-                    --    output_flag = false
-                    --end
-                    --if t<100 then
-                    --    print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
-                    --end
+                    local score = pred[1][target_eval[t][1]]
+                    if t == 11 then
+                        output_flag = true
+                    else
+                        output_flag = false
+                    end
+                    print (string.format('t:%d, label: %s, score: %f', t, split(labels_gold[1])[t], score))
+                    if true then
+                        print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
+                    end
                     --for kk = 1, batch_size do
                     --    local counter = attn_inds[kk]
                     --    local p_i = math.floor((counter-1) / imgW_fine) + 1
@@ -901,7 +904,6 @@ function model:step(batch, forward_only, beam_size, trie)
                         --for kk = 1, fea_inds:size(1) do
                     local next_state = {}
                     --table.insert(preds, out[#out])
-                    local pred = self.output_projector:forward(out[#out]) --batch_size, vocab_size
                     -- target_eval[t] --batch_size
                     --for j = 1, batch_size do
                     --    if target_eval[t][j] ~= 1 then
@@ -975,11 +977,11 @@ function model:step(batch, forward_only, beam_size, trie)
             local rewards = nil -- current reward before subtracting baselines
             print (self.reward_baselines[1])
             for t = target_l, 1, -1 do
-                --if t == 80 then 
-                --    output_flag= true
-                --else
-                --    output_flag = false
-                --end
+                if t == 1 then 
+                    output_flag= true
+                else
+                    output_flag = false
+                end
                     -- print attn
                     --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
                     local attn_vals, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
