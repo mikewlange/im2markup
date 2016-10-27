@@ -285,12 +285,12 @@ function main()
     -- Load data
     logging:info(string.format('Data base dir %s', opt.data_base_dir))
     logging:info(string.format('Load training data from %s', opt.data_path))
-    local train_data = DataGen(opt.data_base_dir, opt.data_path, opt.label_path, 10.0, opt.max_encoder_l_h, opt.max_encoder_l_w, opt.max_decoder_l)
+    local train_data = DataGen(opt.data_base_dir, opt.data_path, opt.label_path, 10.0, opt.max_encoder_fine_l_h, opt.max_encoder_fine_l_w, opt.max_decoder_l)
     logging:info(string.format('Training data loaded from %s', opt.data_path))
     local val_data
     if phase == 'train' then
         logging:info(string.format('Load validation data from %s', opt.val_data_path))
-        val_data = DataGen(opt.data_base_dir, opt.val_data_path, opt.label_path, 10.0, opt.max_encoder_l_h, opt.max_encoder_l_w, opt.max_decoder_l)
+        val_data = DataGen(opt.data_base_dir, opt.val_data_path, opt.label_path, 10.0, opt.max_encoder_fine_l_h, opt.max_encoder_fine_l_w, opt.max_decoder_l)
         logging:info(string.format('Validation data loaded from %s', opt.val_data_path))
     end
     local trie = nil
