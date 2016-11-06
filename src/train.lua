@@ -40,7 +40,7 @@ cmd:text('**Optimization**')
 cmd:text('')
 cmd:option('-num_epochs', 1500, [[The number of whole data passes]])
 cmd:option('-batch_size', 1, [[Batch size]])
-cmd:option('-learning_rate', 0.005, [[Initial learning rate]])
+cmd:option('-learning_rate', 0.05, [[Initial learning rate]])
 cmd:option('-learning_rate_min', 0.001, [[Initial learning rate]])
 cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
@@ -83,7 +83,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local num_nonzeros = 0
     local accuracy = 0
     local forward_only
-    local learning_rate = model.optim_state.learningRate or learning_rate_init
+    local learning_rate = learning_rate_init --model.optim_state.learningRate or learning_rate_init
     learning_rate = math.max(learning_rate, opt.learning_rate_min)
     model.optim_state.learningRate = learning_rate
     logging:info(string.format('Lr: %f', learning_rate))
