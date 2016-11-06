@@ -1,7 +1,6 @@
  --[[ Model, adapted from https://github.com/harvardnlp/seq2seq-attn/blob/master/train.lua
 --]]
 require 'nn'
-require 'hdf5'
 require 'cudnn'
 require 'optim'
 require 'paths'
@@ -16,6 +15,7 @@ require 'model_utils'
 require 'optim_adadelta'
 require 'optim_sgd'
 require 'memory'
+require 'mybatchnorm'
 
 local model = torch.class('Model')
 
@@ -73,6 +73,19 @@ function model:load(model_path, config)
     local reward_baselines = checkpoint[6]
     self.reward_baselines = reward_baselines or {}
 
+    -- evaluate batch norm layers
+    local bn_nodes, container_nodes = self.cnn_model:findModules('nn.SpatialBatchNormalization')
+    assert (#bn_nodes == 5 or #bn_nodes == 0)
+    for i = 1, #bn_nodes do
+        --Search the container for the current threshold node
+        for j = 1, #(container_nodes[i].modules) do
+            if container_nodes[i].modules[j] == bn_nodes[i] then
+                -- Replace with a new instance
+                container_nodes[i].modules[j] = nn.BatchNorm(bn_nodes[i])
+                print ('Fixing Batch Normalization')
+            end
+        end
+    end
     -- Load model structure parameters
     self.cnn_feature_size = 512
     self.dropout = model_config.dropout
@@ -84,7 +97,7 @@ function model:load(model_path, config)
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
     self.prealloc = config.prealloc
-    self.fine = model_config.fine or {4,8}
+    self.fine = model_config.fine or {4,4}
 
     self.entropy_scale = config.entropy_scale or model_config.entropy_scale
     self.semi_sampling_p = config.semi_sampling_p or model_config.semi_sampling_p
@@ -147,7 +160,7 @@ function model:create(config)
     self.baseline_lr = config.baseline_lr
     self.discount = config.discount
     self.prealloc = config.prealloc
-    self.fine = {4,8}
+    self.fine = {4,4}
     preallocateMemory(config.prealloc)
 
     self.pos_embedding_fine_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
@@ -267,22 +280,22 @@ function model:_build()
     self.encoder_coarse_bw_clones = clone_many_times(self.encoder_coarse_bw, self.max_encoder_coarse_l_w)
    
     self.softmax_attn_clones={}
-        for i = 1, #self.decoder_clones do
-            local decoder = self.decoder_clones[i]
-            local decoder_attn
-            decoder:apply(function (layer) 
-                if layer.name == 'decoder_attn' then
-                    decoder_attn = layer
-                end
-            end)
-            assert (decoder_attn)
-            decoder:apply(function (layer)
-                if layer.name == 'mul_attn' then
-                    self.softmax_attn_clones[i] = layer
-                end
-            end)
-            assert (self.softmax_attn_clones[i])
-        end
+    for i = 1, #self.decoder_clones do
+        local decoder = self.decoder_clones[i]
+        local decoder_attn
+        decoder:apply(function (layer) 
+            if layer.name == 'decoder_attn' then
+                decoder_attn = layer
+            end
+        end)
+        assert (decoder_attn)
+        decoder:apply(function (layer)
+            if layer.name == 'mul_attn' then
+                self.softmax_attn_clones[i] = layer
+            end
+        end)
+        assert (self.softmax_attn_clones[i])
+    end
     for i = 1, #self.encoder_fine_fw_clones do
         if self.encoder_fine_fw_clones[i].apply then
             self.encoder_fine_fw_clones[i]:apply(function(m) m:setReuse() end)
@@ -320,7 +333,7 @@ function model:_build()
                 elseif m.name == 'sampler_fine' then
                     m.prealloc = nil
                     self.sampler_fine_clones[i] = m
-                    m.semi_sampling_p = self.semi_sampling_p
+                    m.semi_sampling_p = 1.0
                     m.entropy_scale = self.entropy_scale
                 end
             end)
@@ -889,10 +902,10 @@ function model:step(batch, forward_only, beam_size, trie)
                     else
                         output_flag = false
                     end
-                    print (string.format('t:%d, label: %s, score: %f', t, split(labels_gold[1])[t], score))
-                    if true then
-                        print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
-                    end
+                    --print (string.format('t:%d, label: %s, score: %f', t, split(labels_gold[1])[t], score))
+                    --if true then
+                    --    print (string.format('t:%d, coarse h:%d, coarse w:%d fine h:%d, fine w:%d', t, i_H, i_W, i_H_fine, i_W_fine))
+                    --end
                     --for kk = 1, batch_size do
                     --    local counter = attn_inds[kk]
                     --    local p_i = math.floor((counter-1) / imgW_fine) + 1
@@ -984,11 +997,11 @@ function model:step(batch, forward_only, beam_size, trie)
                 end
                     -- print attn
                     --attn_probs[{{}, t, {}}]:copy(self.softmax_attn_clones[t].output)
-                    local attn_vals, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
-                    attn_inds = attn_inds:view(-1) --batch_size
-                    attn_vals = attn_vals:view(-1)
-                    local i_H = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] / imgW_coarse) + 1
-                    local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse)
+                    --local attn_vals, attn_inds = torch.min(self.softmax_attn_clones[t].output:view(-1,imgH_coarse*imgW_coarse*self.fine[1]*self.fine[2]), 2) --batch_size, 1
+                    --attn_inds = attn_inds:view(-1) --batch_size
+                    --attn_vals = attn_vals:view(-1)
+                    --local i_H = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] / imgW_coarse) + 1
+                    --local i_W = math.floor((attn_inds[1]-1) / self.fine[1] / self.fine[2] - (i_H-1) * imgW_coarse)
                     --if t==1 then
                     --    print (string.format('%d, %d', i_H, i_W))
                     --end
@@ -1013,10 +1026,8 @@ function model:step(batch, forward_only, beam_size, trie)
                 else
                     local rewards_norm = rewards:clone():add(-1.0*self.reward_baselines[t])
                     rewards_norm:maskedFill(target_eval[t]:eq(1), 0)
-                    --self.sampler_fine_clones[t]:reinforce(localize(torch.zeros(batch_size)))--rewards_norm:clone():div(batch_size/0.004))
-                    self.sampler_fine_clones[t]:reinforce(rewards_norm:clone():div(batch_size/0.1))
-                    --self.sampler_coarse_clones[t]:reinforce(localize(torch.zeros(batch_size)))--rewards_norm:clone():div(batch_size/0.004))
-                    self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone():div(batch_size/0.1))
+                    self.sampler_fine_clones[t]:reinforce(rewards_norm:clone():div(batch_size))
+                    self.sampler_coarse_clones[t]:reinforce(rewards_norm:clone():div(batch_size))
                 end
                     
                 if num_valid > 0 then -- update baselines

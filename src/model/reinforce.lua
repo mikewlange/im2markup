@@ -97,12 +97,15 @@ function ReinforceCategorical:updateOutput(input)
    self.output:resizeAs(input)
    self._index = self._index or ((torch.type(input) == 'torch.CudaTensor') and torch.CudaTensor() or torch.LongTensor())
    if self.train then
-      --sample
-      self:_doSample(input)
+       --sample
+       self:_doSample(input)
    else
-     assert(self.train == false)
-     -- do argmax at test time
-     self:_doArgmax(input)
+       assert(self.train == false)
+       if self.semi_sampling_p < 0.5 then
+           self:_doArgmax(input)
+       else
+           self:_doSample(input)
+       end
    end
    return self.output
 end
