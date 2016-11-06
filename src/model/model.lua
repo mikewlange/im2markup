@@ -71,7 +71,7 @@ function model:load(model_path, config)
     self.optim_state = checkpoint[4]
     id2vocab = checkpoint[5]
     local reward_baselines = checkpoint[6]
-    self.reward_baselines = reward_baselines or {}
+    self.reward_baselines = {}--reward_baselines or {}
 
     -- evaluate batch norm layers
     local bn_nodes, container_nodes = self.cnn_model:findModules('nn.SpatialBatchNormalization')
