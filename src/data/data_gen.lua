@@ -59,23 +59,47 @@ function DataGen:size()
     return #self.lines
 end
 
+vocab2id_source = nil
 function DataGen:nextBatch(batch_size)
+    if vocab2id_source == nil then
+        vocab2id_source = tds.Hash()
+        for i = 1, #id2vocab_source do
+            vocab2id_source[id2vocab_source[i]] = i+4
+        end
+    end
     while true do
         if self.cursor > #self.lines then
             break
         end
-        local img_path = self.lines[self.cursor][1]
-        local status, img = pcall(image.load, paths.concat(self.data_base_dir, img_path))
-        if not status then
+        local doc_path = self.lines[self.cursor][1]
+        local file, err = io.open(paths.concat(self.data_base_dir, doc_path), "r")
+        if err then
             self.cursor = self.cursor + 1
-            log(img_path)
+            log(doc_path)
         else
+            local doc = tds.Hash()
+            local sentence_idx = 1
+            for line in file:readlines() do
+                local strlist = split(trim(line))
+                local numlist = tds.Hash()
+                numlist[1] = 2
+                for i = 1, #strlist do
+                    local token = strlist[i]
+                    if vocab2id_source[token] ~= nil then
+                        numlist[#numlist+1] = vocab2id_source[token]
+                    elseif token == '__PAD__' then
+                        numlist[#numlist+1] = 1 -- PAD
+                    else
+                        numlist[#numlist+1] = 4 -- UNK
+                    end
+                end
+                doc[sentence_idx] = numlist
+            end
             local label_str = self.lines[self.cursor][2]
             local label_list = path2numlist(label_str, self.label_path)
             self.cursor = self.cursor + 1
-            img = 255.0*image.rgb2y(img)
-            local origH = img:size()[2]
-            local origW = img:size()[3]
+            local origH = #doc
+            local origW = #doc[1]
             if #label_list-1 > self.max_decoder_l then
                 log(string.format('WARNING: %s\'s target sequence is too long, will be truncated. Consider using a larger max_num_tokens'%img_path))
                 local temp = {}
@@ -85,21 +109,15 @@ function DataGen:nextBatch(batch_size)
                 label_list = temp
             end
             if #label_list-1 <= self.max_decoder_l and math.floor(origH/8.0) <= self.max_encoder_l_h and math.floor(origW/8.0) <= self.max_encoder_l_w then
-                local aspect_ratio = origW / origH
-                aspect_ratio = math.min(aspect_ratio, self.max_aspect_ratio)
-                aspect_ratio = math.max(aspect_ratio, self.min_aspect_ratio)
-                --local imgW = math.ceil(aspect_ratio *self.imgH)
-                --imgW = 100
                 local imgW = origW
                 local imgH = origH
-                --img = image.scale(img, imgW, self.imgH)
                 if self.buffer[imgW] == nil then
                     self.buffer[imgW] = {}
                 end
                 if self.buffer[imgW][imgH] == nil then
                     self.buffer[imgW][imgH] = {}
                 end
-                table.insert(self.buffer[imgW][imgH], {img:clone(), label_list, img_path})
+                table.insert(self.buffer[imgW][imgH], {doc, label_list, doc_path})
                 if #self.buffer[imgW][imgH] == batch_size then
                     local images = torch.Tensor(batch_size, 1, imgH, imgW)
                     local max_target_length = -math.huge
@@ -107,7 +125,11 @@ function DataGen:nextBatch(batch_size)
                     local img_paths = {}
                     for i = 1, #self.buffer[imgW][imgH] do
                         img_paths[i] = self.buffer[imgW][imgH][i][3]
-                        images[i]:copy(self.buffer[imgW][imgH][i][1])
+                        for j = 1, imgH do
+                            for k = 1, imgW do
+                                images[i][j][k] = self.buffer[imgW][imgH][i][1][j][k]
+                            end
+                        end
                         max_target_length = math.max(max_target_length, #self.buffer[imgW][imgH][i][2])
                     end
                     -- targets: use as input. SOS, ch1, ch2, ..., chn
@@ -154,7 +176,11 @@ function DataGen:nextBatch(batch_size)
     local img_paths = {}
     for i = 1, #self.buffer[imgW][imgH] do
         img_paths[i] = self.buffer[imgW][imgH][i][3]
-        images[i]:copy(self.buffer[imgW][imgH][i][1])
+        for j = 1, imgH do
+            for k = 1, imgW do
+                images[i][j][k] = self.buffer[imgW][imgH][i][1][j][k]
+            end
+        end
         max_target_length = math.max(max_target_length, #self.buffer[imgW][imgH][i][2])
     end
     local targets = torch.IntTensor(real_batch_size, max_target_length-1):fill(1)

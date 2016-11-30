@@ -32,6 +32,15 @@ python scripts/preprocessing/generate_summarization_vocab.py \
 --unk-threshold 2
 ```
 
+```
+th src/train.lua \
+-data_base_dir summary/documents_processed_one_line \ 
+-data_path summary/all_stories-train-filter.txt \
+-label_path summary/all_stories_targ.txt \
+-val_data_path summary/all_stories-val-filter.txt \
+-vocab_file_source summary/vocab.source \
+-vocab_file_target summary/vocab.targ
+```
 
 # im2markup
 

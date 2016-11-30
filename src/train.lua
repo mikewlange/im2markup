@@ -52,7 +52,8 @@ cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cel
 cmd:option('-encoder_num_hidden', 256, [[Number of hidden units in encoder cell]])
 cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]]) -- does not support >1 now!!!
 cmd:option('-decoder_num_layers', 1, [[Number of hidden units in decoder cell]])
-cmd:option('-vocab_file', 'latex_vocab.txt', [[Vocabulary file. A token per line.]])
+cmd:option('-vocab_file_source', '', [[Vocabulary file. A token per line.]])
+cmd:option('-vocab_file_target', '', [[Vocabulary file. A token per line.]])
 
 -- Reinforce
 cmd:option('-entropy_scale', 0.000, [[Scale entropy term]])
@@ -253,12 +254,28 @@ function main()
         model:load(final_model, opt)
     else
         logging:info('Creating model with fresh parameters')
-        logging:info(string.format('Loading vocab from %s', opt.vocab_file))
+        logging:info(string.format('Loading source vocab from %s', opt.vocab_file_source))
+        -- Load Source Vocab
+        id2vocab_source = tds.Hash()
+        local file, err = io.open(opt.vocab_file_source, "r")
+        if err then
+            logging:info(string.format('ERROR: source vocab file %s does not exist!', opt.vocab_file_source))
+            os.exit()
+        end
+        for line in file:lines() do
+            local vocab = trim(line)
+            if string.len(vocab) == 0 then
+                vocab = ' '
+            end
+            id2vocab_source[#id2vocab_source+1] = vocab
+        end
+        opt.source_vocab_size = #id2vocab_source+4
+        logging:info(string.format('Loading vocab from %s', opt.vocab_file_source))
         -- Load Vocab
         id2vocab = tds.Hash()
-        local file, err = io.open(opt.vocab_file, "r")
+        local file, err = io.open(opt.vocab_file_target, "r")
         if err then
-            logging:info(string.format('ERROR: vocab file %s does not exist!', opt.vocab_file))
+            logging:info(string.format('ERROR: target vocab file %s does not exist!', opt.vocab_file_target))
             os.exit()
         end
         for line in file:lines() do

@@ -71,6 +71,7 @@ function model:load(model_path, config)
     self.optim_state = checkpoint[4]
     id2vocab = checkpoint[5]
     local reward_baselines = checkpoint[6]
+    id2vocab_source = checkpoint[7]
     self.reward_baselines = {}--reward_baselines or {}
 
     -- evaluate batch norm layers
@@ -93,6 +94,7 @@ function model:load(model_path, config)
     self.encoder_num_layers = model_config.encoder_num_layers
     self.decoder_num_hidden = self.encoder_num_hidden * 2
     self.decoder_num_layers = model_config.decoder_num_layers
+    self.source_vocab_size = #id2vocab_source+4
     self.target_vocab_size = #id2vocab+4
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
@@ -1292,7 +1294,7 @@ function model:save(model_path)
     for i = 1, #self.layers do
         self.layers[i]:clearState()
     end
-    torch.save(model_path, {{self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}, self.config, self.global_step, self.optim_state, id2vocab, self.reward_baselines})
+    torch.save(model_path, {{self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}, self.config, self.global_step, self.optim_state, id2vocab, self.reward_baselines, id2vocab_source})
 end
 
 function model:shutdown()
