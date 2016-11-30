@@ -1,5 +1,7 @@
 # document summarization
 
+Preprocess documents
+
 ```
 python scripts/preprocessing/preprocess_summaries.py \
 --input-dir summary/documents_orig --output-dir summary/documents_processed_one_line \
@@ -7,6 +9,29 @@ python scripts/preprocessing/preprocess_summaries.py \
 --one-line-mode \
 --truncate-large-document
 ```
+
+Filter train and val files
+
+```
+python scripts/preprocessing/preprocess_filter_summaries.py \
+--documents-dir summary/documents_processed_one_line \
+--data-path summary/all_stories-train.txt --output-path summary/all_stories-train-filter.txt \
+--label-path summary/all_stories_targ.txt \
+--filter \
+--max-num-sentences 1 --max-sentence-length 800 --max-summary-length 100
+```
+
+Generate vocabulary
+
+```
+python scripts/preprocessing/generate_summarization_vocab.py \
+--documents-dir summary/documents_processed_one_line \
+--data-path summary/all_stories-train-filter.txt \
+--label-path summary/all_stories_targ.txt \
+--output-file-source summary/vocab.source --output-file-target summary/vocab.targ \
+--unk-threshold 2
+```
+
 
 # im2markup
 
