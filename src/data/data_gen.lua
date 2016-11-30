@@ -2,7 +2,6 @@
  --    ARGS:
  --        - `data_base_dir`      : string, The base directory of the image path in data_path. If the image path in data_path is absolute path, set it to /.
  --        - `data_path`  : string, The path containing data file names and labels. Format per line: image_path characters. Note that the image_path is the relative path to data_base_dir
- --        - `max_aspect_ratio`  : float, The maximum allowed aspect ratio of resized image. As we set the maximum number of cloned decoders, we need to make sure that the image features sequence length does not exceed the number of available decoders. Image features sequence length is equal to max( img_width/img_height, max_aspect_ratio) * 32 / 4 - 1.
  --]]
 require 'image'
 require 'paths'
@@ -12,13 +11,12 @@ tds = require('tds')
 
 local DataGen = torch.class('DataGen')
 
-function DataGen:__init(data_base_dir, data_path, label_path, max_aspect_ratio, max_encoder_l_h, max_encoder_l_w, max_decoder_l)
+function DataGen:__init(data_base_dir, data_path, label_path, max_encoder_l_h, max_encoder_l_w, max_decoder_l)
     --self.imgW = 32
     self.data_base_dir = data_base_dir
     self.data_path = data_path
     self.label_path = label_path
     self.max_width = max_width
-    self.max_aspect_ratio = max_aspect_ratio or math.huge
     self.max_encoder_l_h = max_encoder_l_h or math.huge
     self.max_encoder_l_w = max_encoder_l_w or math.huge
     self.max_decoder_l = max_decoder_l or math.huge

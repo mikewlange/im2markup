@@ -1,3 +1,13 @@
+# document summarization
+
+```
+python scripts/preprocessing/preprocess_summaries.py \
+--input-dir summary/documents_orig --output-dir summary/documents_processed_one_line \
+--buckets '[[1,800]]' \
+--one-line-mode \
+--truncate-large-document
+```
+
 # im2markup
 
 A general-purpose, deep learning-based system to decompile an image into presentational markup. For example, we can infer the LaTeX or HTML source from a rendered image.
