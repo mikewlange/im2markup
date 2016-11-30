@@ -152,6 +152,41 @@ function ViewAs:updateGradInput(input, gradOutput)
 end
 
 
+local ReshapeAs = torch.class('nn.ReshapeAs', 'nn.Module')
+--(batch_size, imgH*imgW, embedding_size)
+--(batch_size, 1, imgH, imgW)
+-- output:
+--(batch_size, imgH, imgW, embedding_size)
+
+function ReshapeAs:__init()
+  nn.Module.__init(self)
+  self.ndim = ndim
+  self.gradInput = {localize(torch.Tensor()), localize(torch.Tensor())}
+end
+
+function ReshapeAs:updateOutput(input)
+  self.output = self.output or input.new()
+
+  assert(#input == 2, 'ReshapeAs can only take 2 inputs')
+    local sizes = {}
+    sizes[1] = input[2]:size(1)
+    sizes[2] = input[2]:size(3)
+    sizes[3] = input[2]:size(4)
+    sizes[4] = input[1]:size(3)
+    self.output:view(input[1], table.unpack(sizes))
+  return self.output
+end
+
+function ReshapeAs:updateGradInput(input, gradOutput)
+  if self.gradInput == nil or self.gradInput[1] == nil then
+    self.gradInput = {localize(torch.Tensor()), localize(torch.Tensor())}
+  end
+  self.gradInput[2]:resizeAs(input[2]):zero() -- unused
+
+  self.gradInput[1] = self.gradInput[1] or gradOutput.new()
+  self.gradInput[1]:view(gradOutput, input[1]:size())
+  return self.gradInput
+end
 
 local ReplicateAs = torch.class('nn.ReplicateAs', 'nn.Module')
 -- Replicates dim m of input[1] based on dim n of input[2]

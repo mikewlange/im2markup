@@ -88,7 +88,7 @@ function model:load(model_path, config)
         end
     end
     -- Load model structure parameters
-    self.cnn_feature_size = 512
+    self.cnn_feature_size = 100
     self.dropout = model_config.dropout
     self.encoder_num_hidden = model_config.encoder_num_hidden
     self.encoder_num_layers = model_config.encoder_num_layers
@@ -99,7 +99,7 @@ function model:load(model_path, config)
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
     self.prealloc = config.prealloc
-    self.fine = model_config.fine or {4,4}
+    self.fine = model_config.fine or {1,32}
 
     self.entropy_scale = config.entropy_scale or model_config.entropy_scale
     self.semi_sampling_p = config.semi_sampling_p or model_config.semi_sampling_p
@@ -142,13 +142,15 @@ end
 
 -- create model with fresh parameters
 function model:create(config)
-    self.cnn_feature_size = 512
+    self.cnn_feature_size = 100
     self.dropout = config.dropout
     self.encoder_num_hidden = config.encoder_num_hidden
     self.encoder_num_layers = config.encoder_num_layers
     self.decoder_num_hidden = config.encoder_num_hidden * 2
     self.decoder_num_layers = config.decoder_num_layers
+    self.source_vocab_size = config.source_vocab_size
     self.target_vocab_size = config.target_vocab_size
+    self.source_embedding_size = config.source_embedding_size
     self.target_embedding_size = config.target_embedding_size
     self.max_encoder_fine_l_w = config.max_encoder_fine_l_w
     self.max_encoder_fine_l_h = config.max_encoder_fine_l_h
@@ -162,15 +164,15 @@ function model:create(config)
     self.baseline_lr = config.baseline_lr
     self.discount = config.discount
     self.prealloc = config.prealloc
-    self.fine = {4,4}
+    self.fine = {1,16}
     preallocateMemory(config.prealloc)
 
     self.pos_embedding_fine_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_fine_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_coarse_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_coarse_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
-    -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 512)
-    self.cnn_model = createCNNModel()
+    -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 100)
+    self.cnn_model = createCNNModel(self.source_vocab_size, self.source_embedding_size)
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
     self.encoder_fine_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
     self.encoder_fine_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
@@ -451,7 +453,7 @@ function model:step(batch, forward_only, beam_size, trie)
     local feval = function(p) --cut off when evaluate
         target = target_batch:transpose(1,2)
         target_eval = target_eval_batch:transpose(1,2)
-        local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 512)
+        local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 100)
         -- encode fine
         local counter = 1
         local imgH_fine = #cnn_output_fine_list
@@ -469,8 +471,8 @@ function model:step(batch, forward_only, beam_size, trie)
             local pos = localize(torch.zeros(batch_size)):fill(i)
             local pos_embedding_fine_fw  = self.pos_embedding_fine_fw:forward(pos)
             local pos_embedding_fine_bw  = self.pos_embedding_fine_bw:forward(pos)
-            local cnn_output = cnn_output_fine_list[i] --1, imgW, 512
-            local source = cnn_output:transpose(1,2) -- imgW,1,512
+            local cnn_output = cnn_output_fine_list[i] --1, imgW, 100
+            local source = cnn_output:transpose(1,2) -- imgW,1,100
             -- forward encoder
             local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
             for l = 1, self.encoder_num_layers do
@@ -524,8 +526,8 @@ function model:step(batch, forward_only, beam_size, trie)
             local pos = localize(torch.zeros(batch_size)):fill(i)
             local pos_embedding_coarse_fw  = self.pos_embedding_coarse_fw:forward(pos)
             local pos_embedding_coarse_bw  = self.pos_embedding_coarse_bw:forward(pos)
-            local cnn_output = cnn_output_coarse_list[i] --1, imgW, 512
-            local source = cnn_output:transpose(1,2) -- imgW,1,512
+            local cnn_output = cnn_output_coarse_list[i] --1, imgW, 100
+            local source = cnn_output:transpose(1,2) -- imgW,1,100
             -- forward encoder
             local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
             for l = 1, self.encoder_num_layers do
@@ -1068,7 +1070,7 @@ function model:step(batch, forward_only, beam_size, trie)
             -- forward directional encoder
             for i = 1, imgH_coarse do
                 local cnn_output_coarse = cnn_output_coarse_list[i]
-                local source = cnn_output_coarse:transpose(1,2) -- 128,1,512
+                local source = cnn_output_coarse:transpose(1,2) -- 128,1,100
                 assert (imgW_coarse == cnn_output_coarse:size()[2])
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
                 local pos = localize(torch.zeros(batch_size)):fill(i)
@@ -1155,7 +1157,7 @@ function model:step(batch, forward_only, beam_size, trie)
             -- forward directional encoder
             for i = 1, imgH_fine do
                 local cnn_output_fine = cnn_output_fine_list[i]
-                local source = cnn_output_fine:transpose(1,2) -- 128,1,512
+                local source = cnn_output_fine:transpose(1,2) -- 128,1,100
                 assert (imgW_fine == cnn_output_fine:size()[2])
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
                 local pos = localize(torch.zeros(batch_size)):fill(i)

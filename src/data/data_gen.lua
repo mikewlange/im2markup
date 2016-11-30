@@ -79,10 +79,10 @@ function DataGen:nextBatch(batch_size)
         else
             local doc = tds.Hash()
             local sentence_idx = 1
-            for line in file:readlines() do
+            for line in file:lines() do
                 local strlist = split(trim(line))
                 local numlist = tds.Hash()
-                numlist[1] = 2
+                --numlist[1] = 2
                 for i = 1, #strlist do
                     local token = strlist[i]
                     if vocab2id_source[token] ~= nil then
@@ -101,14 +101,14 @@ function DataGen:nextBatch(batch_size)
             local origH = #doc
             local origW = #doc[1]
             if #label_list-1 > self.max_decoder_l then
-                log(string.format('WARNING: %s\'s target sequence is too long, will be truncated. Consider using a larger max_num_tokens'%img_path))
+                log(string.format('WARNING: %s\'s target sequence is too long, will be truncated. Consider using a larger max_num_tokens'%doc_path))
                 local temp = {}
                 for i = 1, self.max_decoder_l+1 do
                     temp[i] = label_list[i]
                 end
                 label_list = temp
             end
-            if #label_list-1 <= self.max_decoder_l and math.floor(origH/8.0) <= self.max_encoder_l_h and math.floor(origW/8.0) <= self.max_encoder_l_w then
+            if #label_list-1 <= self.max_decoder_l and math.floor(origH/1.0) <= self.max_encoder_l_h and math.floor(origW/1.0) <= self.max_encoder_l_w then
                 local imgW = origW
                 local imgH = origH
                 if self.buffer[imgW] == nil then
@@ -119,15 +119,15 @@ function DataGen:nextBatch(batch_size)
                 end
                 table.insert(self.buffer[imgW][imgH], {doc, label_list, doc_path})
                 if #self.buffer[imgW][imgH] == batch_size then
-                    local images = torch.Tensor(batch_size, 1, imgH, imgW)
+                    local images = torch.IntTensor(batch_size, 1, imgH, imgW)
                     local max_target_length = -math.huge
                     -- visualize
-                    local img_paths = {}
+                    local doc_paths = {}
                     for i = 1, #self.buffer[imgW][imgH] do
-                        img_paths[i] = self.buffer[imgW][imgH][i][3]
+                        doc_paths[i] = self.buffer[imgW][imgH][i][3]
                         for j = 1, imgH do
                             for k = 1, imgW do
-                                images[i][j][k] = self.buffer[imgW][imgH][i][1][j][k]
+                                images[i][1][j][k] = self.buffer[imgW][imgH][i][1][j][k]
                             end
                         end
                         max_target_length = math.max(max_target_length, #self.buffer[imgW][imgH][i][2])
@@ -146,10 +146,14 @@ function DataGen:nextBatch(batch_size)
                     end
                     self.buffer[imgW][imgH] = nil
                     --collectgarbage()
-                    do return {images, targets, targets_eval, num_nonzeros, img_paths} end
+                    do return {images, targets, targets_eval, num_nonzeros, doc_paths} end
                 end
             else
-                log(string.format('WARNING: %s is too large, will be ignored. Consider using a larger max_image_width or max_image_height'%img_path))
+                print (origH)
+                print (origW)
+                print (self.max_encoder_l_h)
+                print (self.max_encoder_l_w)
+                log(string.format('WARNING: %s is too large, will be ignored. Consider using a larger max_image_width or max_image_height'%doc_path))
             end
         end
     end
@@ -170,12 +174,12 @@ function DataGen:nextBatch(batch_size)
     end
     local imgH, v = next(self.buffer[imgW], nil) 
     real_batch_size = #self.buffer[imgW][imgH]
-    local images = torch.Tensor(real_batch_size, 1, imgH, imgW)
+    local images = torch.IntTensor(real_batch_size, 1, imgH, imgW)
     local max_target_length = -math.huge
     -- visualize
-    local img_paths = {}
+    local doc_paths = {}
     for i = 1, #self.buffer[imgW][imgH] do
-        img_paths[i] = self.buffer[imgW][imgH][i][3]
+        doc_paths[i] = self.buffer[imgW][imgH][i][3]
         for j = 1, imgH do
             for k = 1, imgW do
                 images[i][j][k] = self.buffer[imgW][imgH][i][1][j][k]
@@ -195,5 +199,5 @@ function DataGen:nextBatch(batch_size)
     end
     self.buffer[imgW][imgH] = nil
     --collectgarbage()
-    return {images, targets, targets_eval, num_nonzeros, img_paths}
+    return {images, targets, targets_eval, num_nonzeros, doc_paths}
 end

@@ -47,7 +47,8 @@ cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
 
 -- Network
 cmd:option('-dropout', 0.0, [[Dropout probability]]) -- does support dropout now!!!
-cmd:option('-target_embedding_size', 80, [[Embedding dimension for each target]])
+cmd:option('-source_embedding_size', 100, [[Embedding dimension for each source]])
+cmd:option('-target_embedding_size', 100, [[Embedding dimension for each target]])
 cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cell]])
 cmd:option('-encoder_num_hidden', 256, [[Number of hidden units in encoder cell]])
 cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]]) -- does not support >1 now!!!
@@ -57,7 +58,7 @@ cmd:option('-vocab_file_target', '', [[Vocabulary file. A token per line.]])
 
 -- Reinforce
 cmd:option('-entropy_scale', 0.000, [[Scale entropy term]])
-cmd:option('-semi_sampling_p', 0.0, [[Probability of passing params through over sampling,
+cmd:option('-semi_sampling_p', 1.0, [[Probability of passing params through over sampling,
                                     set 0 to always sample]])
 cmd:option('-baseline_lr', 0.01, [[Learning rate for averaged baseline, b_{k+1} = (1-lr)*b_k + lr*r]])
 cmd:option('-discount', 0.5, [[Discount factor for rewards, between 0 and 1]])
@@ -68,9 +69,9 @@ cmd:option('-gpu_id', 1, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-visualize', false, [[Print results or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
-cmd:option('-max_num_tokens', 150, [[Maximum number of output tokens]]) -- when evaluate, this is the cut-off length.
-cmd:option('-max_image_width', 480, [[Maximum length of input feature sequence along width direction]]) --800/2/2/2
-cmd:option('-max_image_height', 160, [[Maximum length of input feature sequence along width direction]]) --80 / (2*2*2)
+cmd:option('-max_num_tokens', 100, [[Maximum number of output tokens]]) -- when evaluate, this is the cut-off length.
+cmd:option('-max_image_width', 800, [[Maximum length of input feature sequence along width direction]]) --800/2/2/2
+cmd:option('-max_image_height', 1, [[Maximum length of input feature sequence along width direction]]) --80 / (2*2*2)
 cmd:option('-prealloc', false, [[Use memory preallocation and sharing between cloned encoder/decoders]])
 
 opt = cmd:parse(arg)
@@ -104,7 +105,6 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local val_losses = {}
     for epoch = 1, num_epochs do
         if not forward_only then
-            train_data:shuffle()
             train_data:shuffle()
         end
         if epoch >= start_decay_at and learning_rate > opt.learning_rate_min then
@@ -229,10 +229,10 @@ function main()
     local output_dir = opt.output_dir
 
     opt.max_decoder_l = opt.max_num_tokens+1
-    opt.max_encoder_fine_l_w = math.floor(opt.max_image_width / 8.0)
-    opt.max_encoder_fine_l_h = math.floor(opt.max_image_height / 8.0)
-    opt.max_encoder_coarse_l_w = math.floor(opt.max_image_width / 32.0)
-    opt.max_encoder_coarse_l_h = math.floor(opt.max_image_height / 32.0)
+    opt.max_encoder_fine_l_w = math.floor(opt.max_image_width / 1.0)
+    opt.max_encoder_fine_l_h = math.floor(opt.max_image_height / 1.0)
+    opt.max_encoder_coarse_l_w = math.max(1, math.floor(opt.max_image_width / 32.0))
+    opt.max_encoder_coarse_l_h = math.max(1, math.floor(opt.max_image_height / 1.0))
     if gpu_id > 0 then
         logging:info(string.format('Using CUDA on GPU %d', gpu_id))
         require 'cutorch'
