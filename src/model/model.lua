@@ -112,6 +112,8 @@ function model:load(model_path, config)
     self.max_encoder_coarse_l_h = config.max_encoder_coarse_l_h or model_config.max_encoder_coarse_l_h
     self.max_decoder_l = config.max_decoder_l or model_config.max_decoder_l
     self.batch_size = config.batch_size or model_config.batch_size
+    self.pre_word_vecs_enc = ''--config.pre_word_vecs_enc
+    self.pre_word_vecs_dec = ''--config.pre_word_vecs_dec
 
     if config.max_encoder_fine_l_h > model_config.max_encoder_fine_l_h then
         local pos_embedding_fine_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
@@ -165,6 +167,9 @@ function model:create(config)
     self.discount = config.discount
     self.prealloc = config.prealloc
     self.fine = {1,16}
+    self.pre_word_vecs_enc = config.pre_word_vecs_enc
+    self.pre_word_vecs_dec = config.pre_word_vecs_dec
+
     preallocateMemory(config.prealloc)
 
     self.pos_embedding_fine_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
@@ -274,6 +279,29 @@ function model:_build()
             self.params[i] = p
             self.grad_params[i] = gp
         end
+    end
+    word_vec_layers = {}
+    self.cnn_model:apply(function (m)
+        if m.name == 'word_vecs_encoder' then word_vec_layers[1] = m end
+    end)
+    self.decoder:apply(function (m)
+        if m.name == 'word_vecs_decoder' then word_vec_layers[2] = m end
+    end)
+    assert (word_vec_layers[1] ~= nil)
+    assert (word_vec_layers[2] ~= nil)
+    if self.pre_word_vecs_enc:len() > 0 then   
+        local f = hdf5.open(self.pre_word_vecs_enc)     
+        local pre_word_vecs = f:read('word_vecs'):all()
+        for i = 1, pre_word_vecs:size(1) do
+            word_vec_layers[1].weight[i]:copy(pre_word_vecs[i])
+        end      
+    end
+    if self.pre_word_vecs_dec:len() > 0 then      
+        local f = hdf5.open(self.pre_word_vecs_dec)     
+        local pre_word_vecs = f:read('word_vecs'):all()
+        for i = 1, pre_word_vecs:size(1) do
+            word_vec_layers[2].weight[i]:copy(pre_word_vecs[i])
+        end      
     end
     log(string.format('Number of parameters: %d', num_params))
 
@@ -819,7 +847,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 --    output_flag = false
                 --end
                 local decoder_input
-                decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
+                decoder_input = {target[t], context_coarse:zero(), reshape_context_fine:zero(), table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 table.insert(preds, out[#out])

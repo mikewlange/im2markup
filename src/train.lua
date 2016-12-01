@@ -24,6 +24,10 @@ cmd:option('-val_data_path', 'summary/all_stories-val.txt', [[The path containin
 cmd:option('-model_dir', 'model', [[The directory for saving and loading model parameters (structure is not stored)]])
 cmd:option('-log_path', 'log.txt', [[The path to put log]])
 cmd:option('-output_dir', 'results', [[The path to put visualization results if visualize is set to True]])
+cmd:option('-pre_word_vecs_enc', '', [[If a valid path is specified, then this will load 
+                                      pretrained word embeddings (hdf5 file) on the encoder side.]])
+cmd:option('-pre_word_vecs_dec', '', [[If a valid path is specified, then this will load 
+                                      pretrained word embeddings (hdf5 file) on the decoder side.]])
 
 -- Display
 cmd:option('-steps_per_checkpoint', 400, [[Checkpointing (print perplexity, save model) per how many steps]])
@@ -47,8 +51,8 @@ cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
 
 -- Network
 cmd:option('-dropout', 0.0, [[Dropout probability]]) -- does support dropout now!!!
-cmd:option('-source_embedding_size', 100, [[Embedding dimension for each source]])
-cmd:option('-target_embedding_size', 100, [[Embedding dimension for each target]])
+cmd:option('-source_embedding_size', 300, [[Embedding dimension for each source]])
+cmd:option('-target_embedding_size', 300, [[Embedding dimension for each target]])
 cmd:option('-input_feed', false, [[Whether or not use LSTM attention decoder cell]])
 cmd:option('-encoder_num_hidden', 256, [[Number of hidden units in encoder cell]])
 cmd:option('-encoder_num_layers', 1, [[Number of hidden layers in encoder cell]]) -- does not support >1 now!!!
@@ -113,9 +117,10 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             logging:info(string.format('Decay lr, current lr: %f', learning_rate))
         end
         while true do
-            train_batch = train_data:nextBatch(batch_size)
+            --train_batch = train_data:nextBatch(batch_size)
             if train_batch == nil then
-                break
+            train_batch = train_data:nextBatch(batch_size)
+            --    break
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)

@@ -59,6 +59,7 @@ function createLSTM(input_size, num_hidden, num_layers,
     if L == 1 then
       if use_lookup then
           local embeddings = nn.LookupTable(vocab_size, input_size)
+          embeddings.name = string.format('word_vecs_%s', model)
           x = embeddings(inputs[1])
       else
           x = inputs[1]

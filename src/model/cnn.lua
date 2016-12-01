@@ -11,7 +11,9 @@ function createCNNModel(source_vocab_size, source_embedding_size)
     table.insert(inputs, nn.Identity()()) -- input
     -- input shape: (batch_size, 1, imgH, imgW)
     model:add(nn.View(-1):setNumInputDims(3)) --(batch_size, imgH*imgW)
-    model:add(nn.LookupTable(source_vocab_size, source_embedding_size)) --(batch_size, imgH*imgW, embedding_size)
+    local word_embedding_layer = nn.LookupTable(source_vocab_size, source_embedding_size)
+    word_embedding_layer.name = 'word_vecs_encoder'
+    model:add(word_embedding_layer) --(batch_size, imgH*imgW, embedding_size)
     local word_embeddings = model(inputs[1])
     local raw_features = nn.ReshapeAs()({word_embeddings, inputs[1]}) --(batch_size, imgH, imgW, embedding_size)
 

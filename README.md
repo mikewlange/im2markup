@@ -29,17 +29,31 @@ python scripts/preprocessing/generate_summarization_vocab.py \
 --data-path summary/all_stories-train-filter.txt \
 --label-path summary/all_stories_targ.txt \
 --output-file-source summary/vocab.source --output-file-target summary/vocab.targ \
---unk-threshold 2
+--unk-threshold 1
 ```
 
 ```
-th src/train.lua \
+th src/train.lua -prealloc -phase train -batch_size 20 \
 -data_base_dir summary/documents_processed_one_line \ 
 -data_path summary/all_stories-train-filter.txt \
 -label_path summary/all_stories_targ.txt \
 -val_data_path summary/all_stories-val-filter.txt \
 -vocab_file_source summary/vocab.source \
 -vocab_file_target summary/vocab.targ
+```
+
+```
+python scripts/preprocessing/load_word2vec.py \
+--word2vec /n/rush_lab/data/GoogleNews-vectors-negative300.bin \
+--vocab-file summary/vocab.source \
+--output-file summary/embedding.source
+```
+
+```
+python scripts/preprocessing/load_word2vec.py \
+--word2vec /n/rush_lab/data/GoogleNews-vectors-negative300.bin \
+--vocab-file summary/vocab.targ \
+--output-file summary/embedding.targ
 ```
 
 # im2markup

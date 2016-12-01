@@ -17,7 +17,7 @@ def process_args(args):
                         help=('Output file for putting word embeddings.'
                         ))
     parser.add_argument('--offset', dest='offset',
-                        type=int, default=1,
+                        type=int, default=4,
                         help=('Source side vocabulary offset. Default: reserve the first token for padding_symbol'
                         ))
     parser.add_argument('--log-path', dest="log_path",

@@ -45,10 +45,6 @@ def process_args(args):
                         type=str, default='log.txt',
                         help=('Log file path, default=log.txt' 
                         ))
-    parser.add_argument('--postfix', dest='postfix',
-                        type=str, default='.png',
-                        help=('The format of images, default=".png".'
-                        ))
     parameters = parser.parse_args(args)
     return parameters
 
@@ -78,37 +74,39 @@ def main(args):
         labels = open(parameters.label_path).readlines()
     with open(output_path, 'w') as fout:
         with open(data_path, 'r') as fdata:
-            for line in fdata:
+            for num_lines, line in enumerate(fdata):
+                if num_lines % 1000 == 0:
+                    logging.info('%d lines processed'%num_lines)
                 line_strip = line.strip()
                 if len(line_strip) > 0:
-                    line_idx, img_path, mod = line_strip.split()
-                    img_path = os.path.join(image_dir, img_path) + parameters.postfix
+                    doc_path, line_idx = line_strip.split()
+                    doc_path = os.path.join(documents_dir, doc_path)
                     if parameters.filter:
-                        if not os.path.exists(img_path):
-                            logging.warning('%s does not exist!'%os.path.basename(img_path))
+                        if not os.path.exists(doc_path):
+                            logging.warning('%s does not exist!'%os.path.basename(doc_path))
                             num_nonexist += 1
                             continue
-                        old_im = Image.open(img_path)
-                        old_size = old_im.size
-                        w = old_size[0]
-                        h = old_size[1]
+                        with open(doc_path) as fdoc:
+                            lines = fdoc.readlines()
+                        w = len(lines[0].split())
+                        h = len(lines)
                     else:
                         w = 0
                         h = 0
-                    if (not parameters.filter) or (w <= parameters.max_width and h <= parameters.max_height):
+                    if (not parameters.filter) or (w <= parameters.max_sentence_length and h <= parameters.max_num_sentences):
                         if parameters.filter:
                             label = labels[int(line_idx)]
                             if len(label.strip()) == 0:
-                                logging.info('%s discarded due to cannot-be-parsed formula!'%os.path.basename(img_path))
+                                logging.info('%s discarded due to cannot-be-parsed formula!'%os.path.basename(doc_path))
                                 continue
-                            if len(label.strip().split()) > parameters.max_tokens:
-                                logging.info('%s discarded due to too many tokens!'%os.path.basename(img_path))
+                            if len(label.strip().split()) > parameters.max_summary_length:
+                                logging.info('%s discarded due to too many summary tokens!'%os.path.basename(doc_path))
                                 continue
-                        fout.write('%s %s\n'%(os.path.basename(img_path),line_idx))
+                        fout.write('%s %s\n'%(os.path.basename(doc_path),line_idx))
                     else:
-                        logging.info('%s discarded due to large image size!'%os.path.basename(img_path))
+                        logging.info('%s discarded due to large image size!'%os.path.basename(doc_path))
                         num_discard += 1
-    logging.info('%d discarded. %d not found in %s.'%(num_discard, num_nonexist, image_dir))
+    logging.info('%d discarded. %d not found in %s.'%(num_discard, num_nonexist, documents_dir))
 
 
 if __name__ == '__main__':
