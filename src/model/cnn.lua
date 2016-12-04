@@ -25,7 +25,7 @@ function createCNNModel(source_vocab_size, source_embedding_size)
     local model_coarse = nn.Sequential()
     model_coarse:add(nn.Transpose({3,4}, {2,3})) -- (batch_size, embedding_size, H, W)
     model_coarse:add(cudnn.SpatialConvolution(source_embedding_size, 100, 3, 1, 1, 1, 1, 0)) -- (batch_size, source_embedding_size, imgH, imgW)
-    model_coarse:add(nn.SpatialBatchNormalization(source_embedding_size))
+    model_coarse:add(nn.SpatialBatchNormalization(100))
     model_coarse:add(cudnn.ReLU(true))
     model_coarse:add(cudnn.SpatialMaxPooling(2, 1, 2, 1, 0, 0)) -- (batch_size, source_embedding_size, imgH, imgW/2)
 

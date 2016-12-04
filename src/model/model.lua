@@ -4,6 +4,7 @@ require 'nn'
 require 'cudnn'
 require 'optim'
 require 'paths'
+require 'hdf5'
 
 package.path = package.path .. ';src/?.lua' .. ';src/utils/?.lua' .. ';src/model/?.lua' .. ';src/optim/?.lua'
 require 'cnn'
@@ -75,18 +76,18 @@ function model:load(model_path, config)
     self.reward_baselines = {}--reward_baselines or {}
 
     -- evaluate batch norm layers
-    local bn_nodes, container_nodes = self.cnn_model:findModules('nn.SpatialBatchNormalization')
-    assert (#bn_nodes == 5 or #bn_nodes == 0)
-    for i = 1, #bn_nodes do
-        --Search the container for the current threshold node
-        for j = 1, #(container_nodes[i].modules) do
-            if container_nodes[i].modules[j] == bn_nodes[i] then
-                -- Replace with a new instance
-                container_nodes[i].modules[j] = nn.BatchNorm(bn_nodes[i])
-                print ('Fixing Batch Normalization')
-            end
-        end
-    end
+    --local bn_nodes, container_nodes = self.cnn_model:findModules('nn.SpatialBatchNormalization')
+    --assert (#bn_nodes == 5 or #bn_nodes == 0)
+    --for i = 1, #bn_nodes do
+    --    --Search the container for the current threshold node
+    --    for j = 1, #(container_nodes[i].modules) do
+    --        if container_nodes[i].modules[j] == bn_nodes[i] then
+    --            -- Replace with a new instance
+    --            container_nodes[i].modules[j] = nn.BatchNorm(bn_nodes[i])
+    --            print ('Fixing Batch Normalization')
+    --        end
+    --    end
+    --end
     -- Load model structure parameters
     self.cnn_feature_size = 100
     self.dropout = model_config.dropout
@@ -96,6 +97,7 @@ function model:load(model_path, config)
     self.decoder_num_layers = model_config.decoder_num_layers
     self.source_vocab_size = #id2vocab_source+4
     self.target_vocab_size = #id2vocab+4
+    self.source_embedding_size = model_config.source_embedding_size
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
     self.prealloc = config.prealloc
@@ -166,7 +168,7 @@ function model:create(config)
     self.baseline_lr = config.baseline_lr
     self.discount = config.discount
     self.prealloc = config.prealloc
-    self.fine = {1,16}
+    self.fine = {1,32}
     self.pre_word_vecs_enc = config.pre_word_vecs_enc
     self.pre_word_vecs_dec = config.pre_word_vecs_dec
 
@@ -179,8 +181,8 @@ function model:create(config)
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 100)
     self.cnn_model = createCNNModel(self.source_vocab_size, self.source_embedding_size)
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
-    self.encoder_fine_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
-    self.encoder_fine_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
+    self.encoder_fine_fw = createLSTM(self.source_embedding_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
+    self.encoder_fine_bw = createLSTM(self.source_embedding_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
     self.encoder_coarse_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-coarse-fw')
     self.encoder_coarse_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-coarse-bw')
     self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, {self.fine[1]*self.fine[2], self.max_encoder_coarse_l_h*self.max_encoder_coarse_l_w}, 'decoder',
@@ -227,6 +229,8 @@ function model:_build()
     self.config.decoder_num_hidden = self.decoder_num_hidden
     self.config.decoder_num_layers = self.decoder_num_layers
     self.config.target_vocab_size = self.target_vocab_size
+    self.config.source_vocab_size = self.source_vocab_size
+    self.config.source_embedding_size = self.source_embedding_size
     self.config.target_embedding_size = self.target_embedding_size
     self.config.max_encoder_fine_l_w = self.max_encoder_fine_l_w
     self.config.max_encoder_fine_l_h = self.max_encoder_fine_l_h
@@ -262,7 +266,7 @@ function model:_build()
     self.encoder_coarse_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.encoder_num_hidden))
     self.encoder_coarse_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.encoder_num_hidden))
     self.reshaper_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.fine[1]*self.fine[2], 2*self.encoder_num_hidden))
-    self.cnn_fine_grad_proto = localize(torch.zeros(self.max_encoder_fine_l_h, self.batch_size, self.max_encoder_fine_l_w, self.cnn_feature_size))
+    self.cnn_fine_grad_proto = localize(torch.zeros(self.max_encoder_fine_l_h, self.batch_size, self.max_encoder_fine_l_w, self.source_embedding_size))
     self.cnn_coarse_grad_proto = localize(torch.zeros(self.max_encoder_coarse_l_h, self.batch_size, self.max_encoder_coarse_l_w, self.cnn_feature_size))
     self.pos_embedding_fine_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_coarse_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))

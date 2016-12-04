@@ -117,10 +117,9 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             logging:info(string.format('Decay lr, current lr: %f', learning_rate))
         end
         while true do
-            --train_batch = train_data:nextBatch(batch_size)
-            if train_batch == nil then
             train_batch = train_data:nextBatch(batch_size)
-            --    break
+            if train_batch == nil then
+                break
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
