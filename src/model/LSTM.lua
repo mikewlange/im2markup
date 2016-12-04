@@ -166,7 +166,9 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
                                      {{batch_size, max_encoder_coarse_l*fine, num_hidden},{batch_size, num_hidden, 1}},
                                      {{batch_size, max_encoder_coarse_l*fine, 1}})({reshape_context_fine, nn.Replicate(1,3)(target_t)}) -- batch_size x (imgH_coarse*imgW_coarse*fine) x 1
   attn_fine = nn.Sum(3)(attn_fine) -- batch_size x imgH_coarse*imgW_coarse*fine
-  attn_fine = nn.View(-1):setNumInputDims(1)(nn.ViewAs(3)({attn_fine, context_fine})) -- (batch_size*imgH_coarse*imgW_coarse) x fine
+  attn_fine = nn.View(-1):setNumInputDims(1)(nn.ViewAs(3):usePrealloc("dec_attn_viewas", 
+                                    {{batch_size, max_encoder_coarse_l*fine}, {batch_size, max_encoder_coarse_l, fine}},
+                                    {{batch_size, max_encoder_coarse_l, fine}})({attn_fine, context_fine})) -- (batch_size*imgH_coarse*imgW_coarse) x fine
   local softmax_attn_fine = nn.SoftMax()
   softmax_attn_fine.name = 'softmax_attn_fine'
   attn_fine = softmax_attn_fine(attn_fine) -- 
@@ -174,8 +176,10 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
   -- sample from attn_fine
   local sampler_fine = nn.ReinforceCategorical(entropy_scale, semi_sampling_p)
   sampler_fine.name = 'sampler_fine'
-  attn_fine = sampler_fine(attn_fine) --batch_size x imgH_coarse*imgW_coarse
-  attn_fine = nn.ViewAs(3)({attn_fine, context_fine}) -- batch_size x imgH_coarse*imgW_coarse x fine
+  attn_fine = sampler_fine(attn_fine) --batch_size*imgH_coarse*imgW_coarse x fine
+  attn_fine = nn.ViewAs(3):usePrealloc("dec_attn_viewas2",
+                                    {{batch_size*max_encoder_coarse_l, fine}, {batch_size, max_encoder_coarse_l, fine}},
+                                    {{batch_size, max_encoder_coarse_l, fine}})({attn_fine, context_fine}) -- batch_size x imgH_coarse*imgW_coarse x fine
 
    -- multiply attentions together
    local mul_attn = nn.CMulTable():usePrealloc("dec_hier_attn_cmultable",

@@ -77,6 +77,7 @@ function ReinforceCategorical:_doSample(input)
       -- use p
       self.output:copy(input)
    else
+       assert(false)
      --if self.name == 'sampler_coarse' and output_flag then
      --      print ('here')
      --      print (input[1])
@@ -124,6 +125,7 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
      -- identity function
      self.gradInput:copy(gradOutput)
    else
+       assert(false)
      self.gradInput:copy(self.output)
      local _input = input.new()
      -- prevent division by zero error
