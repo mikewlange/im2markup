@@ -851,7 +851,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 --    output_flag = false
                 --end
                 local decoder_input
-                decoder_input = {target[t], context_coarse:zero(), reshape_context_fine:zero(), table.unpack(rnn_state_dec[t-1])}
+                decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 table.insert(preds, out[#out])
