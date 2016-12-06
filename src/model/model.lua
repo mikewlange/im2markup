@@ -15,6 +15,7 @@ require 'criterion'
 require 'model_utils'
 require 'optim_adadelta'
 require 'optim_sgd'
+require 'optim_checkgrad'
 require 'memory'
 require 'mybatchnorm'
 
@@ -483,6 +484,11 @@ function model:step(batch, forward_only, beam_size, trie)
     end
 
     local feval = function(p) --cut off when evaluate
+        for i = 1, #self.params do
+            if p[i] ~= nil then
+                self.params[i]:copy(p[i])
+            end
+        end
         target = target_batch:transpose(1,2)
         target_eval = target_eval_batch:transpose(1,2)
         local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 100)
@@ -1179,6 +1185,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 self.pos_embedding_coarse_bw:backward(pos, pos_embedding_coarse_grad)
             end
             -- cnn
+            --cnn_coarse_grad:zero()
             local cnn_final_coarse_grad = cnn_coarse_grad:split(1, 1)
             for i = 1, #cnn_final_coarse_grad do
                 cnn_final_coarse_grad[i] = cnn_final_coarse_grad[i]:contiguous():view(batch_size, imgW_coarse, -1)
@@ -1266,6 +1273,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 self.pos_embedding_fine_bw:backward(pos, pos_embedding_fine_grad)
             end
             -- cnn
+            --cnn_fine_grad:zero()
             local cnn_final_fine_grad = cnn_fine_grad:split(1, 1)
             for i = 1, #cnn_final_fine_grad do
                 cnn_final_fine_grad[i] = cnn_final_fine_grad[i]:contiguous():view(batch_size, imgW_fine, -1)
@@ -1279,6 +1287,43 @@ function model:step(batch, forward_only, beam_size, trie)
     end
     local optim_state = self.optim_state
     if not forward_only then
+        --print ('*******')
+        ----optim.checkgrad_list(feval, self.params, 1e-6)
+        ----local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
+        --local loss, orig_grad_params, stats = feval(self.params)
+        --local grad_params = {}
+        --for i = 1, #orig_grad_params do
+        --    if orig_grad_params[i] ~= nil then
+        --        grad_params[i] = orig_grad_params[i]:clone()
+        --    end
+        --end
+        --for i2 = 1, #self.params do
+        --    local i = #self.params - i2 + 1
+        --    if self.params[i] ~= nil then
+        --        print ('i')
+        --        print (i)
+        --        local epsilon = 1e-4
+        --        print ('j')
+        --        local _, max_inds = torch.topk(-1*grad_params[i]:view(-1), 5)
+        --        local _, min_inds = torch.topk(grad_params[i]:view(-1), 5)
+        --        for k = 1, 10 do
+        --            local j
+        --            if k <= 5 then
+        --                j = max_inds[k]
+        --            else
+        --                j = min_inds[k-5]
+        --            end
+        --            print (j)
+        --            -- minus epsilon
+        --            self.params[i][j] = self.params[i][j] - epsilon
+        --            local loss1, tmpgrad_params, stats = feval(self.params)
+        --            self.params[i][j] = self.params[i][j] + 2*epsilon
+        --            local loss2, tmpgrad_params, stats = feval(self.params)
+        --            print (string.format('ana: %f, numerical: %f', grad_params[i][j], (loss2-loss1) / 2.0 / epsilon))
+        --            self.params[i][j] = self.params[i][j] - epsilon
+        --        end
+        --    end
+        --end
         local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
         return loss*batch_size, stats
     else

@@ -124,6 +124,9 @@ function ReinforceCategorical:updateGradInput(input, gradOutput)
    if self._do_through == true then
      -- identity function
      self.gradInput:copy(gradOutput)
+--     if self.name == 'sampler_fine' then
+--     self.gradInput:zero()
+-- end
    else
        assert(false)
      self.gradInput:copy(self.output)

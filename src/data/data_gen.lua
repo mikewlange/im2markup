@@ -140,7 +140,7 @@ function DataGen:nextBatch(batch_size)
                     for i = 1, #self.buffer[imgW][imgH] do
                         num_nonzeros = num_nonzeros + #self.buffer[imgW][imgH][i][2] - 1
                         for j = 1, #self.buffer[imgW][imgH][i][2]-1 do
-                            targets[i][j] = self.buffer[imgW][imgH][i][2][j] 
+                            targets[i][j] = self.buffer[imgW][imgH][i][2][j]
                             targets_eval[i][j] = self.buffer[imgW][imgH][i][2][j+1] 
                         end
                     end
@@ -182,7 +182,7 @@ function DataGen:nextBatch(batch_size)
         doc_paths[i] = self.buffer[imgW][imgH][i][3]
         for j = 1, imgH do
             for k = 1, imgW do
-                images[i][j][k] = self.buffer[imgW][imgH][i][1][j][k]
+                images[i][1][j][k] = self.buffer[imgW][imgH][i][1][j][k]
             end
         end
         max_target_length = math.max(max_target_length, #self.buffer[imgW][imgH][i][2])

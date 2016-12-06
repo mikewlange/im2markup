@@ -73,7 +73,7 @@ cmd:option('-gpu_id', 1, [[Which gpu to use. <=0 means use CPU]])
 cmd:option('-load_model', false, [[Load model from model-dir or not]])
 cmd:option('-visualize', false, [[Print results or not]])
 cmd:option('-seed', 910820, [[Load model from model-dir or not]])
-cmd:option('-max_num_tokens', 100, [[Maximum number of output tokens]]) -- when evaluate, this is the cut-off length.
+cmd:option('-max_num_tokens', 50, [[Maximum number of output tokens]]) -- when evaluate, this is the cut-off length.
 cmd:option('-max_image_width', 800, [[Maximum length of input feature sequence along width direction]]) --800/2/2/2
 cmd:option('-max_image_height', 1, [[Maximum length of input feature sequence along width direction]]) --80 / (2*2*2)
 cmd:option('-prealloc', false, [[Use memory preallocation and sharing between cloned encoder/decoders]])
@@ -108,7 +108,8 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     local prev_loss = nil
     local val_losses = {}
     for epoch = 1, num_epochs do
-        if not forward_only then
+        if forward_only then
+            train_data:shuffle()
             train_data:shuffle()
         end
         if epoch >= start_decay_at and learning_rate > opt.learning_rate_min then
