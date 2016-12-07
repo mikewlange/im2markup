@@ -43,10 +43,10 @@ cmd:text('')
 cmd:text('**Optimization**')
 cmd:text('')
 cmd:option('-num_epochs', 1500, [[The number of whole data passes]])
-cmd:option('-batch_size', 1, [[Batch size]])
-cmd:option('-learning_rate', 0.05, [[Initial learning rate]])
-cmd:option('-learning_rate_min', 0.001, [[Initial learning rate]])
-cmd:option('-lr_decay', 1.0, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
+cmd:option('-batch_size', 20, [[Batch size]])
+cmd:option('-learning_rate', 0.5, [[Initial learning rate]])
+cmd:option('-learning_rate_min', 0.01, [[Initial learning rate]])
+cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
 
 -- Network
@@ -110,6 +110,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
     for epoch = 1, num_epochs do
         if not forward_only then
             train_data:shuffle()
+            train_data:shuffle()
         end
         if epoch >= start_decay_at and learning_rate > opt.learning_rate_min then
             learning_rate = learning_rate*lr_decay
@@ -117,7 +118,9 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             logging:info(string.format('Decay lr, current lr: %f', learning_rate))
         end
         while true do
+            logging:info('loading')
             train_batch = train_data:nextBatch(batch_size)
+            logging:info('loaded')
             if train_batch == nil then
                 break
             --train_batch = train_data:nextBatch(batch_size)
@@ -172,7 +175,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             local val_accuracy = 0
             local b = 1
             while b <= num_batches_val do
-                val_batch = val_data:nextBatch(batch_size)
+                val_batch = val_data:nextBatch(10)
                 if val_batch == nil then
                     if num_batches_val < math.huge then
                         val_data:shuffle()

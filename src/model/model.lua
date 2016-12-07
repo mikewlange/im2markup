@@ -295,6 +295,7 @@ function model:_build()
     assert (word_vec_layers[1] ~= nil)
     assert (word_vec_layers[2] ~= nil)
     if self.pre_word_vecs_enc:len() > 0 then   
+        log(string.format('Load source word embeddings from: %s', self.pre_word_vecs_enc))
         local f = hdf5.open(self.pre_word_vecs_enc)     
         local pre_word_vecs = f:read('word_vecs'):all()
         for i = 1, pre_word_vecs:size(1) do
@@ -302,6 +303,7 @@ function model:_build()
         end      
     end
     if self.pre_word_vecs_dec:len() > 0 then      
+        log(string.format('Load target word embeddings from: %s', self.pre_word_vecs_dec))
         local f = hdf5.open(self.pre_word_vecs_dec)     
         local pre_word_vecs = f:read('word_vecs'):all()
         for i = 1, pre_word_vecs:size(1) do

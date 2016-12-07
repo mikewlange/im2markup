@@ -71,37 +71,45 @@ function DataGen:nextBatch(batch_size)
         if self.cursor > #self.lines then
             break
         end
-        local doc_path = self.lines[self.cursor][1]
-        local file, err = io.open(paths.concat(self.data_base_dir, doc_path), "r")
-        if err then
-            self.cursor = self.cursor + 1
-            log(doc_path)
-        else
-            local doc = tds.Hash()
-            local sentence_idx = 1
-            for line in file:lines() do
-                local strlist = split(trim(line))
-                local numlist = tds.Hash()
-                --numlist[1] = 2
-                for i = 1, #strlist do
-                    local token = strlist[i]
-                    if vocab2id_source[token] ~= nil then
-                        numlist[#numlist+1] = vocab2id_source[token]
-                    elseif token == '__PAD__' then
-                        numlist[#numlist+1] = 1 -- PAD
-                    else
-                        numlist[#numlist+1] = 4 -- UNK
+        if self.lines[self.cursor][3] == nil then
+            local doc_path = self.lines[self.cursor][1]
+            local file, err = io.open(paths.concat(self.data_base_dir, doc_path), "r")
+            if not err then
+                local doc = tds.Hash()
+                local sentence_idx = 1
+                for line in file:lines() do
+                    local strlist = split(trim(line))
+                    local numlist = tds.Hash()
+                    --numlist[1] = 2
+                    for i = 1, #strlist do
+                        local token = strlist[i]
+                        if vocab2id_source[token] ~= nil then
+                            numlist[#numlist+1] = vocab2id_source[token]
+                        elseif token == '__PAD__' then
+                            numlist[#numlist+1] = 1 -- PAD
+                        else
+                            numlist[#numlist+1] = 4 -- UNK
+                        end
                     end
+                    doc[sentence_idx] = numlist
                 end
-                doc[sentence_idx] = numlist
+                self.lines[self.cursor][3] = doc
+                local label_str = self.lines[self.cursor][2]
+                local label_list = path2numlist(label_str, self.label_path)
+                self.lines[self.cursor][4] = tds.Vec(label_list)
             end
-            local label_str = self.lines[self.cursor][2]
-            local label_list = path2numlist(label_str, self.label_path)
+        end
+        if self.lines[self.cursor][3] == nil then
             self.cursor = self.cursor + 1
+        else
+            local doc_path = self.lines[self.cursor][1]
+            local doc = self.lines[self.cursor][3]
+            local label_list = self.lines[self.cursor][4]
             local origH = #doc
             local origW = #doc[1]
+            self.cursor = self.cursor + 1
             if #label_list-1 > self.max_decoder_l then
-                --log(string.format('WARNING: %s\'s target sequence is too long, will be truncated. Consider using a larger max_num_tokens'%doc_path))
+                log(string.format('WARNING: %s\'s target sequence is too long, will be truncated. Consider using a larger max_num_tokens'%doc_path))
                 local temp = {}
                 for i = 1, self.max_decoder_l+1 do
                     temp[i] = label_list[i]
