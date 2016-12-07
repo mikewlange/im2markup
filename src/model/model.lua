@@ -4,6 +4,7 @@ require 'nn'
 require 'cudnn'
 require 'optim'
 require 'paths'
+require 'hdf5'
 
 package.path = package.path .. ';src/?.lua' .. ';src/utils/?.lua' .. ';src/model/?.lua' .. ';src/optim/?.lua'
 require 'cnn'
@@ -14,6 +15,7 @@ require 'criterion'
 require 'model_utils'
 require 'optim_adadelta'
 require 'optim_sgd'
+require 'optim_checkgrad'
 require 'memory'
 require 'mybatchnorm'
 
@@ -75,18 +77,18 @@ function model:load(model_path, config)
     self.reward_baselines = {}--reward_baselines or {}
 
     -- evaluate batch norm layers
-    local bn_nodes, container_nodes = self.cnn_model:findModules('nn.SpatialBatchNormalization')
-    assert (#bn_nodes == 5 or #bn_nodes == 0)
-    for i = 1, #bn_nodes do
-        --Search the container for the current threshold node
-        for j = 1, #(container_nodes[i].modules) do
-            if container_nodes[i].modules[j] == bn_nodes[i] then
-                -- Replace with a new instance
-                container_nodes[i].modules[j] = nn.BatchNorm(bn_nodes[i])
-                print ('Fixing Batch Normalization')
-            end
-        end
-    end
+    --local bn_nodes, container_nodes = self.cnn_model:findModules('nn.SpatialBatchNormalization')
+    --assert (#bn_nodes == 5 or #bn_nodes == 0)
+    --for i = 1, #bn_nodes do
+    --    --Search the container for the current threshold node
+    --    for j = 1, #(container_nodes[i].modules) do
+    --        if container_nodes[i].modules[j] == bn_nodes[i] then
+    --            -- Replace with a new instance
+    --            container_nodes[i].modules[j] = nn.BatchNorm(bn_nodes[i])
+    --            print ('Fixing Batch Normalization')
+    --        end
+    --    end
+    --end
     -- Load model structure parameters
     self.cnn_feature_size = 100
     self.dropout = model_config.dropout
@@ -96,6 +98,7 @@ function model:load(model_path, config)
     self.decoder_num_layers = model_config.decoder_num_layers
     self.source_vocab_size = #id2vocab_source+4
     self.target_vocab_size = #id2vocab+4
+    self.source_embedding_size = model_config.source_embedding_size
     self.target_embedding_size = model_config.target_embedding_size
     self.input_feed = model_config.input_feed
     self.prealloc = config.prealloc
@@ -166,7 +169,7 @@ function model:create(config)
     self.baseline_lr = config.baseline_lr
     self.discount = config.discount
     self.prealloc = config.prealloc
-    self.fine = {1,16}
+    self.fine = {1,32}
     self.pre_word_vecs_enc = config.pre_word_vecs_enc
     self.pre_word_vecs_dec = config.pre_word_vecs_dec
 
@@ -179,8 +182,8 @@ function model:create(config)
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 100)
     self.cnn_model = createCNNModel(self.source_vocab_size, self.source_embedding_size)
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
-    self.encoder_fine_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
-    self.encoder_fine_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
+    self.encoder_fine_fw = createLSTM(self.source_embedding_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
+    self.encoder_fine_bw = createLSTM(self.source_embedding_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
     self.encoder_coarse_fw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-coarse-fw')
     self.encoder_coarse_bw = createLSTM(self.cnn_feature_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-coarse-bw')
     self.decoder = createLSTM(self.target_embedding_size, self.decoder_num_hidden, self.decoder_num_layers, self.dropout, true, self.input_feed, true, self.target_vocab_size, self.batch_size, {self.fine[1]*self.fine[2], self.max_encoder_coarse_l_h*self.max_encoder_coarse_l_w}, 'decoder',
@@ -227,6 +230,8 @@ function model:_build()
     self.config.decoder_num_hidden = self.decoder_num_hidden
     self.config.decoder_num_layers = self.decoder_num_layers
     self.config.target_vocab_size = self.target_vocab_size
+    self.config.source_vocab_size = self.source_vocab_size
+    self.config.source_embedding_size = self.source_embedding_size
     self.config.target_embedding_size = self.target_embedding_size
     self.config.max_encoder_fine_l_w = self.max_encoder_fine_l_w
     self.config.max_encoder_fine_l_h = self.max_encoder_fine_l_h
@@ -262,7 +267,7 @@ function model:_build()
     self.encoder_coarse_fw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.encoder_num_hidden))
     self.encoder_coarse_bw_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.encoder_num_hidden))
     self.reshaper_grad_proto = localize(torch.zeros(self.batch_size, self.max_encoder_coarse_l_w*self.max_encoder_coarse_l_h, self.fine[1]*self.fine[2], 2*self.encoder_num_hidden))
-    self.cnn_fine_grad_proto = localize(torch.zeros(self.max_encoder_fine_l_h, self.batch_size, self.max_encoder_fine_l_w, self.cnn_feature_size))
+    self.cnn_fine_grad_proto = localize(torch.zeros(self.max_encoder_fine_l_h, self.batch_size, self.max_encoder_fine_l_w, self.source_embedding_size))
     self.cnn_coarse_grad_proto = localize(torch.zeros(self.max_encoder_coarse_l_h, self.batch_size, self.max_encoder_coarse_l_w, self.cnn_feature_size))
     self.pos_embedding_fine_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_coarse_grad_fw_proto = localize(torch.zeros(self.batch_size, self.encoder_num_layers*self.encoder_num_hidden*2))
@@ -479,6 +484,11 @@ function model:step(batch, forward_only, beam_size, trie)
     end
 
     local feval = function(p) --cut off when evaluate
+        --for i = 1, #self.params do
+        --    if p[i] ~= nil then
+        --        self.params[i]:copy(p[i])
+        --    end
+        --end
         target = target_batch:transpose(1,2)
         target_eval = target_eval_batch:transpose(1,2)
         local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 100)
@@ -847,7 +857,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 --    output_flag = false
                 --end
                 local decoder_input
-                decoder_input = {target[t], context_coarse:zero(), reshape_context_fine:zero(), table.unpack(rnn_state_dec[t-1])}
+                decoder_input = {target[t], context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 local out = self.decoder_clones[t]:forward(decoder_input)
                 local next_state = {}
                 table.insert(preds, out[#out])
@@ -1175,6 +1185,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 self.pos_embedding_coarse_bw:backward(pos, pos_embedding_coarse_grad)
             end
             -- cnn
+            --cnn_coarse_grad:zero()
             local cnn_final_coarse_grad = cnn_coarse_grad:split(1, 1)
             for i = 1, #cnn_final_coarse_grad do
                 cnn_final_coarse_grad[i] = cnn_final_coarse_grad[i]:contiguous():view(batch_size, imgW_coarse, -1)
@@ -1262,6 +1273,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 self.pos_embedding_fine_bw:backward(pos, pos_embedding_fine_grad)
             end
             -- cnn
+            --cnn_fine_grad:zero()
             local cnn_final_fine_grad = cnn_fine_grad:split(1, 1)
             for i = 1, #cnn_final_fine_grad do
                 cnn_final_fine_grad[i] = cnn_final_fine_grad[i]:contiguous():view(batch_size, imgW_fine, -1)
@@ -1275,6 +1287,43 @@ function model:step(batch, forward_only, beam_size, trie)
     end
     local optim_state = self.optim_state
     if not forward_only then
+        --print ('*******')
+        ----optim.checkgrad_list(feval, self.params, 1e-6)
+        ----local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
+        --local loss, orig_grad_params, stats = feval(self.params)
+        --local grad_params = {}
+        --for i = 1, #orig_grad_params do
+        --    if orig_grad_params[i] ~= nil then
+        --        grad_params[i] = orig_grad_params[i]:clone()
+        --    end
+        --end
+        --for i2 = 1, #self.params do
+        --    local i = #self.params - i2 + 1
+        --    if self.params[i] ~= nil then
+        --        print ('i')
+        --        print (i)
+        --        local epsilon = 1e-4
+        --        print ('j')
+        --        local _, max_inds = torch.topk(-1*grad_params[i]:view(-1), 5)
+        --        local _, min_inds = torch.topk(grad_params[i]:view(-1), 5)
+        --        for k = 1, 10 do
+        --            local j
+        --            if k <= 5 then
+        --                j = max_inds[k]
+        --            else
+        --                j = min_inds[k-5]
+        --            end
+        --            print (j)
+        --            -- minus epsilon
+        --            self.params[i][j] = self.params[i][j] - epsilon
+        --            local loss1, tmpgrad_params, stats = feval(self.params)
+        --            self.params[i][j] = self.params[i][j] + 2*epsilon
+        --            local loss2, tmpgrad_params, stats = feval(self.params)
+        --            print (string.format('ana: %f, numerical: %f', grad_params[i][j], (loss2-loss1) / 2.0 / epsilon))
+        --            self.params[i][j] = self.params[i][j] - epsilon
+        --        end
+        --    end
+        --end
         local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
         return loss*batch_size, stats
     else

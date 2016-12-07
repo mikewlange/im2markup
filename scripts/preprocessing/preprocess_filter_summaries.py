@@ -30,15 +30,15 @@ def process_args(args):
     parser.add_argument('--no-filter', dest='filter', action='store_false')
     parser.set_defaults(filter=False)
     parser.add_argument('--max-num-sentences', dest='max_num_sentences',
-                        type=str, default=100,
+                        type=int, default=100,
                         help=('If filter flag is set, documents with more than max-num-sentences sentences will be discarded in the output file.'
                         ))
     parser.add_argument('--max-sentence-length', dest='max_sentence_length',
-                        type=str, default=300,
+                        type=int, default=300,
                         help=('If filter flag is set, documents with longer sentence length than max-sentence-length will be discarded in the output file.'
                         ))
     parser.add_argument('--max-summary-length', dest='max_summary_length',
-                        type=str, default=150,
+                        type=int, default=150,
                         help=('If filter flag is set, documents with more than max-summary-length target summary tokens will be discarded in the output file.'
                         ))
     parser.add_argument('--log-path', dest="log_path",
@@ -98,8 +98,10 @@ def main(args):
                             label = labels[int(line_idx)]
                             if len(label.strip()) == 0:
                                 logging.info('%s discarded due to cannot-be-parsed formula!'%os.path.basename(doc_path))
+                                num_discard += 1
                                 continue
                             if len(label.strip().split()) > parameters.max_summary_length:
+                                num_discard += 1
                                 logging.info('%s discarded due to too many summary tokens!'%os.path.basename(doc_path))
                                 continue
                         fout.write('%s %s\n'%(os.path.basename(doc_path),line_idx))

@@ -47,7 +47,11 @@ function optim.sgd_list(opfunc, x, config, state)
            local nevals = state[i].evalCounter
            local y = x[i]
            local dfdy = dfdx[i]
+           --if i ~= 7 then
+           --    dfdy:zero()
+           --end
            print (string.format('i: %d, para norm: %f, grad norm: %f', i, y:norm(), dfdy:norm()))
+           --dfdy:zero()
            if dfdy:norm() > 10.0 then
                dfdy:mul(10.0/dfdy:norm())
            end

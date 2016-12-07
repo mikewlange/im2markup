@@ -185,6 +185,7 @@ function ReshapeAs:updateGradInput(input, gradOutput)
 
   self.gradInput[1] = self.gradInput[1] or gradOutput.new()
   self.gradInput[1]:view(gradOutput, input[1]:size())
+  self.gradInput[1]:zero()
   return self.gradInput
 end
 
@@ -229,7 +230,7 @@ function ReplicateAs:updateGradInput(input, gradOutput)
   self.gradInput[2]:resizeAs(input[2]):zero() -- unused
 
   input = input[1]
-  self.gradInput[1]:resizeAs(input):zero()
+  self.gradInput[1]:resizeAs(input)
   local rdim = self.in_dim
   local sz = torch.LongStorage(input:dim() + 1)
   sz[rdim] = 1

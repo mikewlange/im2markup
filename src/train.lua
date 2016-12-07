@@ -46,7 +46,7 @@ cmd:option('-num_epochs', 1500, [[The number of whole data passes]])
 cmd:option('-batch_size', 1, [[Batch size]])
 cmd:option('-learning_rate', 0.05, [[Initial learning rate]])
 cmd:option('-learning_rate_min', 0.001, [[Initial learning rate]])
-cmd:option('-lr_decay', 0.5, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
+cmd:option('-lr_decay', 1.0, [[Decay learning rate by this much if (i) perplexity does not decrease on the validation set or (ii) epoch has gone past the start_decay_at_limit]])
 cmd:option('-start_decay_at', 999, [[Start decay after this epoch]])
 
 -- Network
@@ -117,10 +117,10 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             logging:info(string.format('Decay lr, current lr: %f', learning_rate))
         end
         while true do
-            --train_batch = train_data:nextBatch(batch_size)
-            if train_batch == nil then
             train_batch = train_data:nextBatch(batch_size)
-            --    break
+            if train_batch == nil then
+                break
+            --train_batch = train_data:nextBatch(batch_size)
             end
             local real_batch_size = train_batch[1]:size()[1]
             local step_loss, stats = model:step(train_batch, forward_only, beam_size, trie)
@@ -197,14 +197,14 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                 logging:info(string.format('Decay lr, current lr: %f', learning_rate))
             end
             prev_loss = loss
-            logging:info('Saving model')
-            local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
-            local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
-            local final_model_path = paths.concat(model_dir, 'final-model')
-            model:save(model_path)
-            logging:info(string.format('Model saved to %s', model_path))
-            os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
-            os.execute(string.format('mv %s %s', final_model_path_tmp, final_model_path))
+            --logging:info('Saving model')
+            --local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
+            --local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
+            --local final_model_path = paths.concat(model_dir, 'final-model')
+            --model:save(model_path)
+            --logging:info(string.format('Model saved to %s', model_path))
+            --os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
+            --os.execute(string.format('mv %s %s', final_model_path_tmp, final_model_path))
 
         else
             logging:info(string.format('Epoch: %d Number of samples %d - Accuracy = %f Perp = %f', epoch, num_samples, accuracy/num_samples, math.exp(loss/num_nonzeros)))
