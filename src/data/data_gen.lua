@@ -96,7 +96,7 @@ function DataGen:nextBatch(batch_size)
                 self.lines[self.cursor][3] = doc
                 local label_str = self.lines[self.cursor][2]
                 local label_list = path2numlist(label_str, self.label_path)
-                self.lines[self.cursor][4] = tds.Vec(label_list)
+                self.lines[self.cursor][4] = label_list
             end
         end
         if self.lines[self.cursor][3] == nil then
