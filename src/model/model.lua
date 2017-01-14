@@ -179,8 +179,10 @@ function model:create(config)
     self.pos_embedding_fine_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_fine_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_coarse_fw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h,self.encoder_num_layers*self.encoder_num_hidden*2))
     self.pos_embedding_coarse_bw = nn.Sequential():add(nn.LookupTable(self.max_encoder_coarse_l_h, self.encoder_num_layers*self.encoder_num_hidden*2))
+    -- Word model, input size: (batch_size, 1, 32, width), output size: (batch_size, 1, 32, word_embedding_size)
+    self.word_model = createWordModel(self.source_vocab_size, self.source_embedding_size)
     -- CNN model, input size: (batch_size, 1, 32, width), output size: (batch_size, sequence_length, 100)
-    self.cnn_model = createCNNModel(self.source_vocab_size, self.source_embedding_size)
+    self.cnn_model = createCNNModel(self.encoder_num_hidden * 2)
     -- createLSTM(input_size, num_hidden, num_layers, dropout, use_attention, input_feed, use_lookup, vocab_size)
     self.encoder_fine_fw = createLSTM(self.source_embedding_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-fw')
     self.encoder_fine_bw = createLSTM(self.source_embedding_size, self.encoder_num_hidden, self.encoder_num_layers, self.dropout, false, false, false, nil, self.batch_size, {}, 'encoder-fine-bw')
@@ -254,7 +256,7 @@ function model:_build()
     self.criterion = createCriterion(self.target_vocab_size)
 
     -- convert to cuda if use gpu
-    self.layers = {self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}
+    self.layers = {self.cnn_model, self.word_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector, self.pos_embedding_fine_fw, self.pos_embedding_fine_bw, self.pos_embedding_coarse_fw, self.pos_embedding_coarse_bw}
     for i = 1, #self.layers do
         localize(self.layers[i])
     end
@@ -286,7 +288,7 @@ function model:_build()
         end
     end
     word_vec_layers = {}
-    self.cnn_model:apply(function (m)
+    self.word_model:apply(function (m)
         if m.name == 'word_vecs_encoder' then word_vec_layers[1] = m end
     end)
     self.decoder:apply(function (m)
@@ -477,9 +479,11 @@ function model:step(batch, forward_only, beam_size, trie)
     end
 
     if not forward_only then
+        self.word_model:training()
         self.cnn_model:training()
         self.output_projector:training()
     else
+        self.word_model:evaluate()
         self.cnn_model:evaluate()
         --self.cnn_model:training()
         self.output_projector:evaluate()
@@ -493,11 +497,11 @@ function model:step(batch, forward_only, beam_size, trie)
         --end
         target = target_batch:transpose(1,2)
         target_eval = target_eval_batch:transpose(1,2)
-        local cnn_output_fine_list, cnn_output_coarse_list = unpack(self.cnn_model:forward(input_batch)) -- list of (batch_size, W, 100)
+        local word_embeddings_list = self.word_model:forward(input_batch)
         -- encode fine
         local counter = 1
-        local imgH_fine = #cnn_output_fine_list
-        local imgW_fine = cnn_output_fine_list[1]:size()[2]
+        local imgH_fine = #word_embeddings_list
+        local imgW_fine = word_embeddings_list[1]:size()[2]
         local context_fine = self.context_fine_proto[{{1, batch_size}, {1, imgW_fine*imgH_fine}}]
         assert(imgW_fine <= self.max_encoder_fine_l_w, string.format('max_encoder_fine_l_w (%d) < imgW_fine (%d)!', self.max_encoder_fine_l_w, imgW_fine))
         for i = 1, imgH_fine do
@@ -511,7 +515,7 @@ function model:step(batch, forward_only, beam_size, trie)
             local pos = localize(torch.zeros(batch_size)):fill(i)
             local pos_embedding_fine_fw  = self.pos_embedding_fine_fw:forward(pos)
             local pos_embedding_fine_bw  = self.pos_embedding_fine_bw:forward(pos)
-            local cnn_output = cnn_output_fine_list[i] --1, imgW, 100
+            local cnn_output = word_embeddings_list[i] --1, imgW, 100
             local source = cnn_output:transpose(1,2) -- imgW,1,100
             -- forward encoder
             local rnn_state_enc = reset_state(self.init_fwd_enc, batch_size, 0)
@@ -549,6 +553,9 @@ function model:step(batch, forward_only, beam_size, trie)
                 context_fine[{{},counter, {1+self.encoder_num_hidden, 2*self.encoder_num_hidden}}]:copy(out[#out])
             end
         end
+        -- context_fine ready, batch_size, imgH_fine*imgW_fine, 2*self.encoder_num_hidden
+    --local raw_features = inputs[1] --(batch_size, imgH, imgW, embedding_size)
+        local cnn_output_coarse_list = self.cnn_model:forward(context_fine:contiguous():view(-1, imgH_fine, imgW_fine, 2*self.encoder_num_hidden)) -- list of (batch_size, W, 100)
         -- encode coarse
         local counter = 1
         local imgH_coarse = #cnn_output_coarse_list
@@ -562,6 +569,7 @@ function model:step(batch, forward_only, beam_size, trie)
             else
                 self.pos_embedding_coarse_fw:training()
                 self.pos_embedding_coarse_bw:training()
+                self.pos_embedding_coarse_bw:clearState()
             end
             local pos = localize(torch.zeros(batch_size)):fill(i)
             local pos_embedding_coarse_fw  = self.pos_embedding_coarse_fw:forward(pos)
@@ -670,35 +678,13 @@ function model:step(batch, forward_only, beam_size, trie)
                 end
             end
             rnn_state_dec = reset_state(self.beam_init_fwd_dec, batch_size, 0)
-            --local L = self.encoder_num_layers
-            --if self.input_feed then
-            --    rnn_state_dec[0][1*2-1+1]:copy((torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1])))
-            --    rnn_state_dec[0][1*2+1]:copy((torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2])))
-            --else
-            --    rnn_state_dec[0][1*2-1+0]:copy((torch.cat(rnn_state_enc[source_l][L*2-1], rnn_state_enc_bwd[1][L*2-1])))
-            --    rnn_state_dec[0][1*2+0]:copy((torch.cat(rnn_state_enc[source_l][L*2], rnn_state_enc_bwd[1][L*2])))
-            --end
-            --for L = 2, self.decoder_num_layers do
-            --    rnn_state_dec[0][L*2-1+0]:zero()
-            --    rnn_state_dec[0][L*2+0]:zero()
-            --end
             local beam_context_coarse = beam_replicate(context_coarse)
             local beam_context_fine = beam_replicate(reshape_context_fine)
             local decoder_input
             local beam_input
             for t = 1, target_l do
                 self.decoder_clones[t]:evaluate()
-                --self.decoder_clones[t]:training()
                 if t == 1 then
-                    -- self.trie_locations
-                    if trie ~= nil then
-                        for b = 1, batch_size do
-                            if self.trie_locations[b] == nil then
-                                self.trie_locations[b] = {}
-                            end
-                            self.trie_locations[b] = trie[2]
-                        end
-                    end
                     beam_input = target[t]
                     decoder_input = {beam_input, context_coarse, reshape_context_fine, table.unpack(rnn_state_dec[t-1])}
                 else
@@ -712,119 +698,21 @@ function model:step(batch, forward_only, beam_size, trie)
                 local beam_parents
                 if t == 1 then
                     -- probs batch_size, vocab_size
-                    if trie == nil then
-                        self.beam_scores, raw_indices = probs:topk(beam_size, true)
-                        raw_indices = localize(raw_indices:double())
-                        current_indices = raw_indices
-                    else
-                        self.beam_scores:zero()
-                        raw_indices = localize(torch.zeros(batch_size, beam_size))
-                        local _, i = probs:sort(2, true)
-                        for b = 1, batch_size do
-                            local num_beam = 0
-                            for vocab = 1, self.target_vocab_size do
-                                if num_beam ~= beam_size then
-                                    local vocab_id = i[b][vocab]
-                                    if self.trie_locations[b][vocab_id] ~= nil then
-                                        num_beam = num_beam + 1
-                                        raw_indices[b][num_beam] = vocab_id
-                                        self.beam_scores[b][num_beam] = probs[b][vocab_id]
-                                    end
-                                end
-                            end
-                            if num_beam ~= beam_size then
-                                log(string.format('Warning: valid beam size: %d', num_beam))
-                                local vocab_id = nil
-                                for vocab = 1, self.target_vocab_size do
-                                    if vocab_id == nil then
-                                        local vocab_id_tmp = i[b][vocab]
-                                        if self.trie_locations[b][vocab_id_tmp] ~= nil then
-                                            vocab_id = vocab_id_tmp
-                                        end
-                                    end
-                                end
-                                for beam = num_beam+1, beam_size do
-                                    raw_indices[b][beam] = vocab_id
-                                    self.beam_scores[b][beam] = probs[b][vocab_id]
-                                end
-                            end
-                            local trie_locations = {}
-                            for beam = 1, beam_size do
-                                local vocab_id = raw_indices[b][beam]
-                                trie_locations[beam] = self.trie_locations[b][vocab_id]
-                            end
-                            self.trie_locations[b] = trie_locations
-                        end
-                        current_indices = raw_indices
-                    end
+                    self.beam_scores, raw_indices = probs:topk(beam_size, true)
+                    raw_indices = localize(raw_indices:double())
+                    current_indices = raw_indices
                 else
                     -- batch_size*beam_size, vocab_size
                     probs:select(2,1):maskedFill(beam_input:eq(1), 0) -- once padding or EOS encountered, stuck at that point
                     probs:select(2,1):maskedFill(beam_input:eq(3), 0)
                     local total_scores = (probs:view(batch_size, beam_size, self.target_vocab_size) + self.beam_scores[{{1,batch_size}, {}}]:view(batch_size, beam_size, 1):expand(batch_size, beam_size, self.target_vocab_size)):view(batch_size, beam_size*self.target_vocab_size) -- batch_size, beam_size * target_vocab_size
-                    if trie == nil then
-                        self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
-                        raw_indices = localize(raw_indices:double())
-                        raw_indices:add(-1)
-                        if use_cuda then
-                            current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
-                        else
-                            current_indices = raw_indices:fmod(self.target_vocab_size)+1 -- batch_size, beam_size for current vocab
-                        end
+                    self.beam_scores, raw_indices = total_scores:topk(beam_size, true) --batch_size, beam_size
+                    raw_indices = localize(raw_indices:double())
+                    raw_indices:add(-1)
+                    if use_cuda then
+                        current_indices = raw_indices:double():fmod(self.target_vocab_size):cuda()+1 -- batch_size, beam_size for current vocab
                     else
-                        raw_indices = localize(torch.zeros(batch_size, beam_size))
-                        current_indices = localize(torch.zeros(batch_size, beam_size))
-                        local _, i = total_scores:sort(2, true) -- batch_size, beam_size*target_size
-                        for b = 1, batch_size do
-                            local num_beam = 0
-                            for beam_vocab = 1, beam_size*self.target_vocab_size do
-                                if num_beam ~= beam_size then
-                                    local beam_vocab_id = i[b][beam_vocab]
-                                    local vocab_id = (beam_vocab_id-1) % self.target_vocab_size + 1
-                                    local beam_id = math.floor((beam_vocab_id-1) / self.target_vocab_size)+1 -- batch_size, beam_size for number of beam in each batch
-                                    if vocab_id == 1 or self.trie_locations[b][beam_id][vocab_id] ~= nil then
-                                        num_beam = num_beam + 1
-                                        current_indices[b][num_beam] = vocab_id
-                                        raw_indices[b][num_beam] = beam_vocab_id-1
-                                        self.beam_scores[b][num_beam] = total_scores[b][beam_vocab_id]
-                                    end
-                                end
-                            end
-                            if num_beam ~= beam_size then
-                                log(string.format('Warning: valid beam size: %d', num_beam))
-                                local beam_vocab_id = nil
-                                for beam_vocab = 1, beam_size*self.target_vocab_size do
-                                    if beam_vocab_id == nil then
-                                        local beam_vocab_id_tmp = i[b][beam_vocab]
-                                        local vocab_id = (beam_vocab_id_tmp-1) % self.target_vocab_size + 1
-                                        local beam_id = math.floor((beam_vocab_id_tmp-1) / self.target_vocab_size)+1 -- batch_size, beam_size for number of beam in each batch
-                                        if vocab_id == 1 or self.trie_locations[b][vocab_id_tmp] ~= nil then
-                                            beam_vocab_id = vocab_id_tmp
-                                        end
-                                    end
-                                end
-                                for beam = num_beam+1, beam_size do
-                                    local vocab_id = (beam_vocab_id-1) % self.target_vocab_size + 1
-                                    local beam_id = ((beam_vocab_id-1) / self.target_vocab_size):floor()+1 -- batch_size, beam_size for number of beam in each batch
-                                    current_indices[b][beam] = vocab_id
-                                    raw_indices[b][beam] = beam_vocab_id-1
-                                    self.beam_scores[b][beam] = total_scores[b][beam_vocab_id]
-                                end
-                            end
-                            local trie_locations = {}
-                            for beam = 1, beam_size do
-                                local beam_vocab_id = raw_indices[b][beam]
-                                local beam_id = math.floor((beam_vocab_id) / self.target_vocab_size)+1 -- batch_size, beam_size for number of beam in each batch
-                                local vocab_id = (beam_vocab_id) % self.target_vocab_size + 1
-                                if vocab_id == 1 then
-                                    trie_locations[beam] = self.trie_locations[b][beam_id]
-                                else
-                                    trie_locations[beam] = self.trie_locations[b][beam_id][vocab_id]
-                                end
-                            end
-                            self.trie_locations[b] = trie_locations
-                        end
-                        
+                        current_indices = raw_indices:fmod(self.target_vocab_size)+1 -- batch_size, beam_size for current vocab
                     end
                 end
                 beam_parents = localize(raw_indices:int()/self.target_vocab_size+1) -- batch_size, beam_size for number of beam in each batch
@@ -1104,8 +992,6 @@ function model:step(batch, forward_only, beam_size, trie)
             local cnn_fine_grad = self.cnn_fine_grad_proto[{{1,imgH_fine}, {1,batch_size}, {1,imgW_fine}, {}}]
             local cnn_coarse_grad = self.cnn_coarse_grad_proto[{{1,imgH_coarse}, {1,batch_size}, {1,imgW_coarse}, {}}]
             local encoder_fine_grads = self.reshaper:backward(context_fine, reshaper_grads)
-            encoder_fine_fw_grads:add(encoder_fine_grads[{{}, {}, {1,self.encoder_num_hidden}}])
-            encoder_fine_bw_grads:add(encoder_fine_grads[{{}, {}, {self.encoder_num_hidden+1,2*self.encoder_num_hidden}}])
             -- coarse
             -- forward directional encoder
             for i = 1, imgH_coarse do
@@ -1193,11 +1079,14 @@ function model:step(batch, forward_only, beam_size, trie)
                 cnn_final_coarse_grad[i] = cnn_final_coarse_grad[i]:contiguous():view(batch_size, imgW_coarse, -1)
             end
 
+            encoder_fine_grads:add(self.cnn_model:backward(input_batch, cnn_final_coarse_grad))
+            encoder_fine_fw_grads:add(encoder_fine_grads[{{}, {}, {1,self.encoder_num_hidden}}])
+            encoder_fine_bw_grads:add(encoder_fine_grads[{{}, {}, {self.encoder_num_hidden+1,2*self.encoder_num_hidden}}])
 
             -- fine
             -- forward directional encoder
             for i = 1, imgH_fine do
-                local cnn_output_fine = cnn_output_fine_list[i]
+                local cnn_output_fine = word_embeddings_list[i]
                 local source = cnn_output_fine:transpose(1,2) -- 128,1,100
                 assert (imgW_fine == cnn_output_fine:size()[2])
                 local drnn_state_enc = reset_state(self.init_bwd_enc, batch_size)
@@ -1280,9 +1169,10 @@ function model:step(batch, forward_only, beam_size, trie)
             for i = 1, #cnn_final_fine_grad do
                 cnn_final_fine_grad[i] = cnn_final_fine_grad[i]:contiguous():view(batch_size, imgW_fine, -1)
             end
+
+            self.word_model:backward(input_batch, cnn_final_fine_grad)
             
             
-            self.cnn_model:backward(input_batch, {cnn_final_fine_grad, cnn_final_coarse_grad})
             collectgarbage()
         end
         return loss, self.grad_params, {num_nonzeros, accuracy}
@@ -1290,8 +1180,8 @@ function model:step(batch, forward_only, beam_size, trie)
     local optim_state = self.optim_state
     if not forward_only then
         --print ('*******')
-        ----optim.checkgrad_list(feval, self.params, 1e-6)
-        ----local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
+        ------optim.checkgrad_list(feval, self.params, 1e-6)
+        --local _, loss, stats = optim.sgd_list(feval, self.params, optim_state); loss = loss[1]
         --local loss, orig_grad_params, stats = feval(self.params)
         --local grad_params = {}
         --for i = 1, #orig_grad_params do
@@ -1299,13 +1189,21 @@ function model:step(batch, forward_only, beam_size, trie)
         --        grad_params[i] = orig_grad_params[i]:clone()
         --    end
         --end
-        --for i2 = 1, #self.params do
+        --for i2 = 1, 1 do--#self.params do
+        --    global_t = global_t or 1
+        --    if global_t == 1 then
+        --        global_t = global_t + 1
+        --        break
+        --    end
+        --    
         --    local i = #self.params - i2 + 1
+        --    i = 2
         --    if self.params[i] ~= nil then
         --        print ('i')
         --        print (i)
         --        local epsilon = 1e-4
         --        print ('j')
+        --        
         --        local _, max_inds = torch.topk(-1*grad_params[i]:view(-1), 5)
         --        local _, min_inds = torch.topk(grad_params[i]:view(-1), 5)
         --        for k = 1, 10 do

@@ -185,7 +185,6 @@ function ReshapeAs:updateGradInput(input, gradOutput)
 
   self.gradInput[1] = self.gradInput[1] or gradOutput.new()
   self.gradInput[1]:view(gradOutput, input[1]:size())
-  self.gradInput[1]:zero()
   return self.gradInput
 end
 

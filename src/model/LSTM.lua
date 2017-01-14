@@ -140,7 +140,7 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
   table.insert(inputs, nn.Identity()())
-  local target_t = nn.LinearNoBias(num_hidden, num_hidden)(inputs[1])
+  local target_t = nn.Linear(num_hidden, num_hidden, false)(inputs[1])
   local context_coarse = inputs[2]
   local context_fine = inputs[3]
   simple = simple or 0
@@ -200,7 +200,7 @@ function create_decoder_attn(num_hidden, simple, batch_size, max_encoder_l,
   if simple == 0 then
     context_combined = nn.JoinTable(2):usePrealloc("dec_attn_jointable",
                             {{batch_size,num_hidden},{batch_size, num_hidden}})({context_combined, inputs[1]}) -- batch_size x num_hidden*2
-    context_output = nn.Tanh():usePrealloc("dec_noattn_tanh",{{batch_size,num_hidden}})(nn.LinearNoBias(num_hidden*2, num_hidden):usePrealloc("dec_noattn_linear",
+    context_output = nn.Tanh():usePrealloc("dec_noattn_tanh",{{batch_size,num_hidden}})(nn.Linear(num_hidden*2, num_hidden, false):usePrealloc("dec_noattn_linear",
     {{batch_size,2*num_hidden}})(context_combined))
   else
     context_output = nn.CAddTable():usePrealloc("dec_attn_caddtable1",
