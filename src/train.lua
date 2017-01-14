@@ -118,9 +118,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             logging:info(string.format('Decay lr, current lr: %f', learning_rate))
         end
         while true do
-            logging:info('loading')
             train_batch = train_data:nextBatch(batch_size)
-            logging:info('loaded')
             if train_batch == nil then
                 break
             --train_batch = train_data:nextBatch(batch_size)
