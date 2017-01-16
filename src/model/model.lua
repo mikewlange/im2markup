@@ -57,13 +57,14 @@ function model:load(model_path, config)
     local model, model_config = checkpoint[1], checkpoint[2]
     preallocateMemory(config.prealloc)
     self.cnn_model = model[1]:double()
-    self.encoder_fine_fw = model[2]:double()
-    self.encoder_fine_bw = model[3]:double()
-    self.encoder_coarse_fw = model[4]:double()
-    self.encoder_coarse_bw = model[5]:double()
-    self.reshaper = model[6]:double()
-    self.decoder = model[7]:double()      
-    self.output_projector = model[8]:double()
+    self.word_model = model[2]:double()
+    self.encoder_fine_fw = model[3]:double()
+    self.encoder_fine_bw = model[4]:double()
+    self.encoder_coarse_fw = model[5]:double()
+    self.encoder_coarse_bw = model[6]:double()
+    self.reshaper = model[7]:double()
+    self.decoder = model[8]:double()
+    self.output_projector = model[9]:double()
     self.global_step = checkpoint[3]
     self.optim_state = checkpoint[4]
     id2vocab = checkpoint[5]
@@ -263,7 +264,7 @@ function model:_build()
     end)
     assert (word_vec_layers[1] ~= nil)
     assert (word_vec_layers[2] ~= nil)
-    if self.pre_word_vecs_enc:len() > 0 then   
+    if self.pre_word_vecs_enc:len() > 0 and self._init then   
         log(string.format('Load source word embeddings from: %s', self.pre_word_vecs_enc))
         local f = hdf5.open(self.pre_word_vecs_enc)     
         local pre_word_vecs = f:read('word_vecs'):all()
@@ -271,7 +272,7 @@ function model:_build()
             word_vec_layers[1].weight[i]:copy(pre_word_vecs[i])
         end      
     end
-    if self.pre_word_vecs_dec:len() > 0 then      
+    if self.pre_word_vecs_dec:len() > 0 and self._init then
         log(string.format('Load target word embeddings from: %s', self.pre_word_vecs_dec))
         local f = hdf5.open(self.pre_word_vecs_dec)     
         local pre_word_vecs = f:read('word_vecs'):all()
@@ -383,8 +384,11 @@ function model:_build()
 end
 
 -- one step 
-function model:step(batch, forward_only, beam_size, trie)
+function model:step(batch, forward_only, beam_size)
     if forward_only then
+        for i = 1, #self.layers do
+            self.layers[i]:clearState()
+        end
         self.val_batch_size = self.batch_size
         beam_size = beam_size or 1 -- default argmax
         beam_size = math.min(beam_size, self.target_vocab_size)
@@ -402,21 +406,17 @@ function model:step(batch, forward_only, beam_size, trie)
                 table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- memory cell
                 table.insert(self.beam_init_fwd_dec, beam_decoder_h_init:clone()) -- hidden state
             end
-            self.trie_locations = {}
         else
             self.beam_scores:zero()
             self.current_indices_history = {}
             self.beam_parents_history = {}
-            self.trie_locations = {}
         end
     else
         if self.init_beam then
             self.init_beam = false
-            self.trie_locations = {}
             self.beam_init_fwd_dec = {}
             self.current_indices_history = {}
             self.beam_parents_history = {}
-            self.trie_locations = {}
             self.beam_scores = nil
             collectgarbage()
         end
@@ -983,7 +983,7 @@ function model:step(batch, forward_only, beam_size, trie)
                 cnn_final_coarse_grad[i] = cnn_final_coarse_grad[i]:contiguous():view(batch_size, imgW_coarse, -1)
             end
 
-            encoder_fine_grads:add(self.cnn_model:backward(input_batch, cnn_final_coarse_grad))
+            encoder_fine_grads:add(self.cnn_model:backward(context_fine:contiguous():view(-1, imgH_fine, imgW_fine, 2*self.encoder_num_hidden), cnn_final_coarse_grad))
             encoder_fine_fw_grads:add(encoder_fine_grads[{{}, {}, {1,self.encoder_num_hidden}}])
             encoder_fine_bw_grads:add(encoder_fine_grads[{{}, {}, {self.encoder_num_hidden+1,2*self.encoder_num_hidden}}])
 
@@ -1144,7 +1144,7 @@ function model:save(model_path)
     for i = 1, #self.layers do
         self.layers[i]:clearState()
     end
-    torch.save(model_path, {{self.cnn_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector}, self.config, self.global_step, self.optim_state, id2vocab, self.reward_baselines, id2vocab_source})
+    torch.save(model_path, {{self.cnn_model, self.word_model, self.encoder_fine_fw, self.encoder_fine_bw, self.encoder_coarse_fw, self.encoder_coarse_bw, self.reshaper, self.decoder, self.output_projector}, self.config, self.global_step, self.optim_state, id2vocab, self.reward_baselines, id2vocab_source})
 end
 
 function model:shutdown()

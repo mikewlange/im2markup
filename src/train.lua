@@ -173,7 +173,7 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
             local val_accuracy = 0
             local b = 1
             while b <= num_batches_val do
-                val_batch = val_data:nextBatch(10)
+                val_batch = val_data:nextBatch(batch_size)
                 if val_batch == nil then
                     if num_batches_val < math.huge then
                         val_data:shuffle()
@@ -198,14 +198,14 @@ function train(model, phase, batch_size, num_epochs, train_data, val_data, model
                 logging:info(string.format('Decay lr, current lr: %f', learning_rate))
             end
             prev_loss = loss
-            --logging:info('Saving model')
-            --local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
-            --local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
-            --local final_model_path = paths.concat(model_dir, 'final-model')
-            --model:save(model_path)
-            --logging:info(string.format('Model saved to %s', model_path))
-            --os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
-            --os.execute(string.format('mv %s %s', final_model_path_tmp, final_model_path))
+            logging:info('Saving model')
+            local model_path = paths.concat(model_dir, string.format('model-%d', model.global_step))
+            local final_model_path_tmp = paths.concat(model_dir, '.final-model.tmp')
+            local final_model_path = paths.concat(model_dir, 'final-model')
+            model:save(model_path)
+            logging:info(string.format('Model saved to %s', model_path))
+            os.execute(string.format('cp %s %s', model_path, final_model_path_tmp))
+            os.execute(string.format('mv %s %s', final_model_path_tmp, final_model_path))
 
         else
             logging:info(string.format('Epoch: %d Number of samples %d - Accuracy = %f Perp = %f', epoch, num_samples, accuracy/num_samples, math.exp(loss/num_nonzeros)))
