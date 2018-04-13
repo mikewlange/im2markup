@@ -1,6 +1,6 @@
  --[[ Training, adapted from https://github.com/harvardnlp/seq2seq-attn/blob/master/train.lua
 --]]
-torch.setheaptracking(true)
+torch.setheaptracking(true) 
 require 'nn'
 require 'nngraph'
 require 'cudnn'
